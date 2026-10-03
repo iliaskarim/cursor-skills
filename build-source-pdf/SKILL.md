@@ -6,21 +6,25 @@ description: Build a single PDF from repository source files and tests with stab
 
 ## Purpose
 
-Generate a combined code listing:
-- `ChessCore-all-sources.txt`
-- `ChessCore-all-sources.pdf`
+Generate a combined code listing in the repo root:
+- `{repo-name}-all-sources.txt`
+- `{repo-name}-all-sources.pdf`
 
 Use SF Mono Bold, preserve whitespace, insert page breaks between files, and add bottom-left page numbers.
 
 ## Default Workflow
 
-1. Run the project script from repo root:
+1. `cd` to the repo root (directory containing `Package.swift`).
+
+2. Run:
 
 ```bash
-python3 scripts/export_sources_pdf.py
+python3 ~/.cursor/skills/build-source-pdf/export_sources_pdf.py
 ```
 
-2. Confirm output message indicates both files were written.
+3. Confirm output message indicates both files were written.
+
+Requires `fpdf2`: `pip3 install fpdf2`
 
 ## Formatting Rules
 
@@ -33,15 +37,15 @@ python3 scripts/export_sources_pdf.py
 
 ## What To Edit For User Requests
 
-- **Font size**: change `BODY_PT` in `scripts/export_sources_pdf.py`
+- **Font size**: change `BODY_PT` in `~/.cursor/skills/build-source-pdf/export_sources_pdf.py`
 - **Separator length**: change `FILE_RULE_LEN`
 - **Footer placement**: tune `FOOTER_MARGIN_MM`
 - **Footer style**: update `SourceListingPDF.footer()`
 
-After any change, regenerate:
+After any change, regenerate from repo root:
 
 ```bash
-python3 scripts/export_sources_pdf.py
+python3 ~/.cursor/skills/build-source-pdf/export_sources_pdf.py
 ```
 
 ## Scope of Source Collection
