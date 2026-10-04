@@ -1,31 +1,31 @@
 ---
 name: rewrap-swift-comments
-description: Greedy-wrap Swift // and /// comments at 80 columns using Python len (Unicode-aware) via `scripts/rewrap_swift_comments.py` (`just rewrap`). Use when adding or editing comments, when comment wrap looks ragged or over-wide, or when the user asks to rewrap comments.
+description: Greedy-wrap Swift // and /// comments at 80 columns using Python len (Unicode-aware) via `rewrap_swift_comments.py` in this directory. Use when adding or editing comments, when comment wrap looks ragged or over-wide, or when the user asks to rewrap comments.
 ---
 
 # Rewrap Swift Comments
 
-Comment-wrap policy for agents and humans working in [githubclient](https://github.com/iliaskarim/githubclient). Implementation lives in that repo’s `scripts/rewrap_swift_comments.py`. Run the commands below from the githubclient repository root.
+Comment-wrap policy for agents and humans. The script is `rewrap_swift_comments.py` in this directory. Run it from the project you are editing.
 
 ## Run the script
 
-From the githubclient repository root:
+From the project root (after this skill is linked into `~/.cursor/skills/`):
 
 ```bash
-just rewrap
-# or: python3 scripts/rewrap_swift_comments.py
+python3 ~/.cursor/skills/rewrap-swift-comments/rewrap_swift_comments.py
 ```
 
-Defaults to `GithubClient/`, `GithubClientTests/`, `GithubClientUITests/`, `GitHubAPI/Sources/`, and `GitHubAPI/Tests/`. Skips `.build` (SwiftPM checkouts). Pass paths to limit scope:
+If the skill is not linked there, run `rewrap_swift_comments.py` by its path next to this file. With no arguments it scans the current directory for `.swift` files and skips `.build` (SwiftPM checkouts) and `.git`. Pass paths to limit scope:
 
 ```bash
-just rewrap GithubClient/Views/Component\ views/AsyncPagerView.swift
+python3 ~/.cursor/skills/rewrap-swift-comments/rewrap_swift_comments.py \
+  Sources/Views/AsyncPagerView.swift
 ```
 
 Flags:
 
 - `--width N` — column limit (default 80)
-- `--check` — exit 1 if any file would change (no writes); used by the Lint workflow
+- `--check` — exit 1 if any file would change (no writes)
 - `--dry-run` — print paths that would change (no writes)
 
 After running on Swift sources, format and lint as usual (`swiftformat`, then `swiftlint`) before committing.
@@ -62,6 +62,5 @@ A single token longer than the width stays on its own line, except a URL does no
 ## Tests
 
 ```bash
-python3 scripts/test_rewrap_swift_comments.py
-# or: python3 -m unittest discover -s scripts -p 'test_rewrap*.py'
+python3 ~/.cursor/skills/rewrap-swift-comments/test_rewrap_swift_comments.py
 ```

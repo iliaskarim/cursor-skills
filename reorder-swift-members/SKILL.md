@@ -1,26 +1,25 @@
 ---
 name: reorder-swift-members
-description: Reorder Swift type members to GitHubClient layout rules using `scripts/reorder_swift_members.py` (`just reorder`). Use when adding or editing Swift types, when member order looks wrong, when enum case layout or spacing looks wrong, or when the user asks to reorder properties, methods, or apply member layout conventions.
+description: Reorder Swift type members to the layout rules in this skill using `reorder_swift_members.py` in this directory. Use when adding or editing Swift types, when member order looks wrong, when enum case layout or spacing looks wrong, or when the user asks to reorder properties, methods, or apply member layout conventions.
 ---
 
 # Reorder Swift Members
 
-Layout policy for agents and humans working in [githubclient](https://github.com/iliaskarim/githubclient). Implementation lives in that repo’s `scripts/reorder_swift_members.py`. Run the commands below from the githubclient repository root.
+Layout policy for agents and humans. The script is `reorder_swift_members.py` in this directory. Run it from the project you are editing.
 
 ## Run the script
 
-From the githubclient repository root:
+From the project root (after this skill is linked into `~/.cursor/skills/`):
 
 ```bash
-just reorder
-# or: python3 scripts/reorder_swift_members.py
+python3 ~/.cursor/skills/reorder-swift-members/reorder_swift_members.py
 ```
 
-Defaults to `GithubClient/` and `GitHubAPI/Sources/`. Pass paths to limit scope:
+If the skill is not linked there, run `reorder_swift_members.py` by its path next to this file. With no arguments it scans the current directory for `.swift` files and skips `.build` and `.git`. Pass paths to limit scope:
 
 ```bash
-just reorder --views --non-views \
-  GithubClient/Navigation/GitHubWebURL.swift
+python3 ~/.cursor/skills/reorder-swift-members/reorder_swift_members.py \
+  --views --non-views Sources/Navigation/WebURL.swift
 ```
 
 Flags:
@@ -28,10 +27,10 @@ Flags:
 - `--views` — SwiftUI `View`, `ViewModifier`, `ToolbarContent`
 - `--non-views` — other `struct`, `class`, `enum`, `actor`, and `extension` bodies
 - Omit both flags to run both (default)
-- `--check` — exit 1 if reordering would change any file (no writes); used by the Lint workflow
+- `--check` — exit 1 if reordering would change any file (no writes)
 - `--dry-run` — print paths that would change (no writes)
 
-After running, build and spot-check types with exposed stored properties (`let`/`var` used in memberwise inits) and files that mix private helpers with a main type (e.g. `ChangesPill.swift`, `GitHubMarkdownHTMLWebView.swift`).
+After running, build and spot-check types with exposed stored properties (`let`/`var` used in memberwise inits) and files that mix private helpers with a main type.
 
 ## When not to run
 
@@ -49,7 +48,7 @@ Those guards do not make a just-resolved file safe to reorder. After a merge, le
 
 The script applies this order (after imports). It is not a separate manual step.
 
-Imports stay first, including isolated ``#if DEBUG`` / ``#endif`` wrappers that contain only ``import`` or ``@testable import`` lines (e.g. before a non-DEBUG type). A DEBUG import-only chunk that sits next to another pure DEBUG chunk stays with that neighbor so they share one wrapper — do not split ``UIColor+CSSHex`` / ``DebugNetworkDelay`` into a preamble DEBUG import and a second DEBUG type. Mixed DEBUG (imports plus types) stays one wrapper with imports on top.
+Imports stay first, including isolated ``#if DEBUG`` / ``#endif`` wrappers that contain only ``import`` or ``@testable import`` lines (e.g. before a non-DEBUG type). A DEBUG import-only chunk that sits next to another pure DEBUG chunk stays with that neighbor so they share one wrapper — do not split a DEBUG-only import and a neighboring DEBUG type into a preamble import and a second DEBUG type. Mixed DEBUG (imports plus types) stays one wrapper with imports on top.
 
 Per file:
 
@@ -62,7 +61,7 @@ Import-only `#if` / `#endif` blocks (`#if DEBUG`, `#if canImport`, …) stay in 
 
 `#Preview` chunks that contain multiline `"""` stay opaque (diff literals); other top-level chunks in the file still reorder. Member reorder treats `"""…"""` as opaque so braces inside GraphQL / HTML / JS do not split members. Adjacent file-scope chunks under the same pure `#if DEBUG` share one wrapper instead of a redundant `#endif` / `#if DEBUG` pair. That includes a preview-only helper and its fixtures, and a run of `#Preview` blocks.
 
-Extensions on shared types (`View`, `String`, models, etc.) belong in `GithubClient/Extensions/` (or `GitHubAPI` equivalents), not at the bottom of arbitrary view files. The script reorders within a file; moving a shared extension to `Extensions/` is still a manual relocation when adding or cleaning up files.
+Extensions on shared types (`View`, `String`, models, etc.) belong in an `Extensions/` directory, not at the bottom of arbitrary view files. The script reorders within a file; moving a shared extension to `Extensions/` is still a manual relocation when adding or cleaning up files.
 
 ## Layout rules
 
@@ -85,7 +84,7 @@ Extensions on shared types (`View`, `String`, models, etc.) belong in `GithubCli
 
 ### Other types (`struct`, `class`, `enum`, `actor`, `protocol`, `extension`)
 
-Same as above, except there is no `body`. Enum cases keep declaration order between the static/type section and instance members (nested enums too). `associatedtype` sorts with nested types, by name. Protocol bodies use this same order as struct / class / enum / actor bodies. `extension` bodies use this same order — static members first, then instance vars, then instance funcs, then `init` (`Color+GitHubHex`’s `init?(gitHubHex:)` comes after the static helpers).
+Same as above, except there is no `body`. Enum cases keep declaration order between the static/type section and instance members (nested enums too). `associatedtype` sorts with nested types, by name. Protocol bodies use this same order as struct / class / enum / actor bodies. `extension` bodies use this same order — static members first, then instance vars, then instance funcs, then `init` (a failable `init` comes after the static helpers).
 
 Public computed properties — including `Endpoint` witnesses — sort by name among non-stored **public** instance vars and insert into the public exposed-stored sequence by name: `httpHeaderFields`, then `urlHost`, `urlPath`, `urlPort`, `urlQueryItems`, `urlScheme`. A later public stored `let` must not hoist ahead of an alphabetically earlier public computed var (`downloadURL` after `containsGitLFSPointer`). Default-internal witnesses such as `pathComponent` stay after every public var/let. A `let` inside a getter does not make the property stored and must not hoist it ahead of alphabetically earlier computed vars.
 
@@ -230,14 +229,9 @@ Apply the same groups by hand for files the script skips or for partial fixes. D
 ## Tests
 
 ```bash
-python3 scripts/test_reorder_swift_members.py
-# or: python3 -m unittest discover -s scripts -p 'test_reorder*.py'
+python3 ~/.cursor/skills/reorder-swift-members/test_reorder_swift_members.py
 ```
 
 ## Verify
 
-```bash
-xcodebuild -scheme GithubClient -destination 'platform=iOS Simulator,name=iPhone 17' build
-```
-
-Check representative files: view with `@ScaledMetric` private vars, endpoint with nested `typealias`/`Response`, model with `decodingStrategies`, enum with static helpers (`GitHubWebURL`).
+Build the project you edited. Check a view with `@ScaledMetric` private vars, an endpoint with nested `typealias` / `Response`, a model with `decodingStrategies`, and an enum with static helpers.
