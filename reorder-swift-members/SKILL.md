@@ -48,14 +48,14 @@ Those guards do not make a just-resolved file safe to reorder. After a merge, le
 
 The script applies this order (after imports). It is not a separate manual step.
 
-Imports stay first, including isolated ``#if DEBUG`` / ``#endif`` wrappers that contain only ``import`` or ``@testable import`` lines (e.g. before a non-DEBUG type). A DEBUG import-only chunk that sits next to another pure DEBUG chunk stays with that neighbor so they share one wrapper — do not split a DEBUG-only import and a neighboring DEBUG type into a preamble import and a second DEBUG type. Mixed DEBUG (imports plus types) stays one wrapper with imports on top.
+Imports stay first, including isolated ``#if DEBUG`` / ``#endif`` wrappers that contain only ``import`` or ``@testable import`` lines (e.g. before a non-DEBUG type). A DEBUG import-only chunk that sits next to another pure DEBUG chunk stays with that neighbor so they share one wrapper — do not split a DEBUG-only import and a neighboring DEBUG type into a preamble import and a second DEBUG type. Mixed DEBUG (imports plus types) stays one wrapper with imports on top. Import lines stay in the order written: alphabetizing them would pull a ``#if DEBUG`` or ``#if canImport`` import out of its wrapper.
 
 Per file:
 
-1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by name within this group
-2. Main type(s) the file is named for (`struct` / `class` / `enum` / `actor` / `protocol`, or in `Extensions/` an `extension` on the filename type when there is no primary declaration)
-3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types)
-4. `#Preview` blocks last
+1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by declared name within this group. The name is the `func` / `var` / `let` / type identifier, or the full extended-type path for an extension (`Move` before `Move.Castling`, `Square` before `Square?`). The declaration line breaks a tie. Do not leave equal names in source order.
+2. Main type(s) the file is named for (`struct` / `class` / `enum` / `actor` / `protocol`, or in `Extensions/` an `extension` on the filename type when there is no primary declaration). The filename type stays first. Any other type declarations sort by name.
+3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types). Sort by extended-type path, not source order: path components (`Issue` before `Issue.Label` before `PullRequest`), then plain before `?` before collection sugar (`Issue` before `Issue?` before `[Issue]`), then the conformance and `where` clause (`: Equatable` before `: Hashable`). Because the path is compared first, `Issue?` stays above `Issue.Label`. The declaration line breaks a remaining tie.
+4. `#Preview` blocks last, sorted by the preview header (`#Preview("Default")` before `#Preview("Large")`)
 
 Import-only `#if` / `#endif` blocks (`#if DEBUG`, `#if canImport`, …) stay in the import preamble. They must not be left behind when a private helper is hoisted, and they must not be ranked as leftover chunks.
 
@@ -67,7 +67,7 @@ Extensions on shared types (`View`, `String`, models, etc.) belong in an `Extens
 
 ### SwiftUI types (`View`, `ViewModifier`, `ToolbarContent`)
 
-**Before `body`** (kind first, then ACL, then name within each subgroup — a private nested type stays ahead of an internal static var):
+**Before `body`** (kind first, then ACL, then name, then the declaration line within each subgroup — a private nested type stays ahead of an internal static var):
 
 1. Nested types (`typealias`, `associatedtype`, `struct`, `class`, `enum`)
 2. Static vars/lets
@@ -75,16 +75,16 @@ Extensions on shared types (`View`, `String`, models, etc.) belong in an `Extens
 
 **After `body`:**
 
-1. Non-private instance vars/lets — public, then package, then internal. Within each ACL, exposed **stored** properties keep relative declaration order; other vars (e.g. computed) insert by name (`contains…` before `download…`). An internal `pathComponent` stays after all public vars/lets.
-2. Private instance vars/lets
-3. Internal instance funcs
-4. `init` (including failable `init?` / `init!`)
+1. Non-private instance vars/lets — public, then package, then internal. Within each ACL, exposed **stored** properties keep relative declaration order. That order is the memberwise initializer’s parameter order, so those properties are not alphabetized. Other vars (e.g. computed) insert by name (`contains…` before `download…`). An internal `pathComponent` stays after all public vars/lets.
+2. Private instance vars/lets — `fileprivate`, then `private`, then name, then the declaration line
+3. Non-private instance funcs — public, then package, then internal, then name, then the declaration line (`open(apple:)` before `open(zebra:)`)
+4. `init` (including failable `init?` / `init!`). Every `init` stays in this group, including a private `init`. Within the group: ACL, then `init`, then `init!`, then `init?`, then the parameter list (`init(apple:)` before `init(zebra:)`)
 5. `deinit`
-6. Private instance funcs
+6. Private instance funcs — `fileprivate`, then `private`, then name, then the declaration line
 
 ### Other types (`struct`, `class`, `enum`, `actor`, `protocol`, `extension`)
 
-Same as above, except there is no `body`. Enum cases keep declaration order between the static/type section and instance members (nested enums too). `associatedtype` sorts with nested types, by name. Protocol bodies use this same order as struct / class / enum / actor bodies. `extension` bodies use this same order — static members first, then instance vars, then instance funcs, then `init` (a failable `init` comes after the static helpers).
+Same as above, except there is no `body`. Enum cases stay in declaration order between the static/type section and instance members (nested enums too). That order is the implicit raw-value sequence and the synthesized `Codable` order, so cases are not alphabetized. `associatedtype` sorts with nested types, by name, then by the declaration line. Protocol bodies use this same order as struct / class / enum / actor bodies. `extension` bodies use this same order — static members first, then instance vars, then instance funcs, then `init` (a failable `init` comes after the static helpers).
 
 Public computed properties — including `Endpoint` witnesses — sort by name among non-stored **public** instance vars and insert into the public exposed-stored sequence by name: `httpHeaderFields`, then `urlHost`, `urlPath`, `urlPort`, `urlQueryItems`, `urlScheme`. A later public stored `let` must not hoist ahead of an alphabetically earlier public computed var (`downloadURL` after `containsGitLFSPointer`). Default-internal witnesses such as `pathComponent` stay after every public var/let. A `let` inside a getter does not make the property stored and must not hoist it ahead of alphabetically earlier computed vars.
 
@@ -98,7 +98,7 @@ Apply to every `enum`, including nested ones. There is no SwiftLint / SwiftForma
 - **Raw values** (`case a = 1`, `case scheme = "CALLBACK_URL_SCHEME"`): one `case` per declaration, blank line before the next `case`. Do not write `case a = 1, b = 2`.
 - **Associated values** (`case foo(Bar)`, `indirect case foo(Bar)`): one `case` per declaration, blank line before the next `case`.
 - **Comments**: do not merge a case that has its own `///` / `//` onto a shared comma line. Those stay separate declarations, with a blank line between them.
-- **Mix**: keep source order; do not alphabetize. Adjacent simple names share a statement. Each raw-value, associated, or commented `case` is its own declaration, with a blank line before the next.
+- **Mix**: walk the cases in declaration order; do not alphabetize. Adjacent simple names share a statement. Each raw-value, associated, or commented `case` is its own declaration, with a blank line before the next. Reordering names would change implicit raw values and synthesized `Codable`.
 
 ```swift
 enum SearchCategory: String {
@@ -133,7 +133,7 @@ enum Event {
 
 - `private(set)` / `fileprivate(set)` count as **internal** for grouping (read access is internal).
 - Within each ACL, **vars/lets always precede funcs** — never interleave.
-- Nested types are sorted alphabetically by name, separate from static members (types first, then static vars, then static funcs; ACL then name within each kind).
+- Nested types are sorted alphabetically by name, then by the declaration line, separate from static members (types first, then static vars, then static funcs; ACL then name within each kind). Same-name static funcs sort by signature, not source order.
 
 ### `#if DEBUG` members
 
@@ -224,7 +224,7 @@ Brace / paren matching treats `"""…"""`, ordinary `"…"`, and raw `#"…"#` /
 
 ## When editing manually
 
-Apply the same groups by hand for files the script skips or for partial fixes. Do not alphabetize exposed stored `let` properties that define memberwise init parameter order. Do alphabetize public computed properties (`httpHeaderFields` before `urlPath`). Apply `.init` only where the type is already inferred; do not add a `: Type` annotation to drop the name from the constructor.
+Apply the same groups by hand for files the script skips or for partial fixes. Do not alphabetize exposed stored `let` properties: their declaration order is the memberwise initializer’s parameter order. Do alphabetize public computed properties (`httpHeaderFields` before `urlPath`). Sort same-name overloads and `init` / `init!` / `init?` by signature. Apply `.init` only where the type is already inferred; do not add a `: Type` annotation to drop the name from the constructor.
 
 ## Tests
 

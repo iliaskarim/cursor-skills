@@ -3,18 +3,21 @@
 
 SwiftUI types (View, ViewModifier, ToolbarContent):
   Before ``body``: nested types, then static vars/lets, then static funcs.
-  Within each of those groups, sort by ACL, then name. A private nested type
-  stays ahead of an internal static var.
+  Within each of those groups, sort by ACL, then name, then the declaration.
+  A private nested type stays ahead of an internal static var.
   After ``body`` (and the instance-member section on other types): internal instance
   variables, private variables, internal functions, ``init``, ``deinit``, private
   functions. Within the non-private variable group, ACL outranks name (public,
   then package, then internal). Exposed stored properties keep relative
-  declaration order within each ACL; other vars in that ACL (computed, etc.)
-  insert by name. Other member groups sort by ACL, then name.
+  declaration order within each ACL (that order is the memberwise initializer's
+  parameter order); other vars in that ACL (computed, etc.) insert by name.
+  Other member groups sort by ACL, then name, then the declaration. Same-name
+  overloads and ``init`` / ``init!`` / ``init?`` do not stay in source order.
 
 Other types (struct, class, enum, actor, protocol):
   Nested types, then static vars/lets, then static funcs (ACL, then name
-  within each group); then enum cases (declaration order),
+  within each group); then enum cases (declaration order — implicit raw values
+  and synthesized Codable follow it, so cases are not alphabetized),
   then the same instance-member order as above.
   ``associatedtype`` sorts with nested types, by name. Protocol bodies are
   reordered the same way as struct / class / enum / actor bodies.
@@ -26,10 +29,14 @@ Enum cases (every enum, including nested):
   ``case`` statements.
 
 File layout (per file, after imports):
-  private/fileprivate helpers (sorted by name), main type(s), other extensions, previews.
+  private/fileprivate helpers (sorted by declared name, not source order),
+  main type(s) (filename type first, then other types by name),
+  other extensions (by extended-type path, not source order),
+  then ``#Preview`` blocks (by preview header).
   A ``protocol`` is a main type, same as ``struct`` / ``class`` / ``enum`` / ``actor``,
   so conformances stay below the protocol the file is named for.
-  Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
+  Import lines stay in the order written so a ``#if`` wrapper is not pulled
+  apart. Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
   stay in the import preamble. They must not be left behind when a private
   helper is hoisted, and they must not be ranked as leftover chunks.
   ``#Preview`` chunks that contain ``\"\"\"`` stay opaque; other top-level
@@ -560,23 +567,65 @@ def is_init_member(text: str) -> bool:
     return bool(INIT_DECL_RE.match(first_code_line(text)))
 
 
+_LEADING_DECL_MODIFIERS = re.compile(
+    r"^(?:(?:public|package|open|internal|fileprivate|private|required|"
+    r"convenience|override|final|static|class|mutating|nonmutating|"
+    r"unowned|weak|indirect|nonisolated|distributed|consuming|borrowing)\s+)*"
+)
+
+
+def declaration_sort_text(text: str) -> str:
+    """Declaration without leading attributes or modifiers.
+
+    The sort key uses this so ``public init(apple:)`` and ``init(zebra:)``
+    compare as ``init`` signatures, and two ``open`` overloads compare by
+    parameter list instead of source order.
+    """
+    line = first_code_line(text)
+    line = re.sub(r"^(?:@\w+(?:\([^)]*\))?\s+)+", "", line)
+    return _LEADING_DECL_MODIFIERS.sub("", line)
+
+
+def init_failable_rank(text: str) -> int:
+    """``init`` then ``init!`` then ``init?``. Non-inits share rank 0."""
+    if not is_init_member(text):
+        return 0
+    line = declaration_sort_text(text)
+    if line.startswith("init?"):
+        return 2
+    if line.startswith("init!"):
+        return 1
+    return 0
+
+
+def member_order_key(text: str) -> tuple:
+    """Total order: ACL, var-before-fn, name, failable rank, signature, text.
+
+    The last two fields replace a stable source-order tie. Identical text
+    compares equal; nothing else is left in source order.
+    """
+    return (
+        ACL_RANK[acl_of(text)],
+        VAR_BEFORE_FN_RANK.get(member_kind(text), 0),
+        member_name(text),
+        init_failable_rank(text),
+        declaration_sort_text(text),
+        text.strip(),
+    )
+
+
 def sort_members(members: list[str], kinds: tuple[str, ...]) -> list[str]:
     filtered = [m for m in members if member_kind(m) in kinds]
-    filtered.sort(
-        key=lambda m: (
-            ACL_RANK[acl_of(m)],
-            VAR_BEFORE_FN_RANK.get(member_kind(m), 0),
-            member_name(m),
-        )
-    )
+    filtered.sort(key=member_order_key)
     return filtered
 
 
 def sort_before_body_members(members: list[str]) -> list[str]:
     """Types, then static vars, then static funcs.
 
-    Within each kind, sort by ACL, then name. Kind outranks ACL, so a private
-    nested type stays ahead of an internal static var.
+    Within each kind, sort by ACL, then name, then the declaration line. Kind
+    outranks ACL, so a private nested type stays ahead of an internal static var.
+    Same-name members do not stay in source order.
     """
     filtered = [m for m in members if member_kind(m) in BEFORE_BODY_KINDS]
     filtered.sort(
@@ -584,13 +633,20 @@ def sort_before_body_members(members: list[str]) -> list[str]:
             BEFORE_BODY_MEMBER_RANK[member_kind(m)],
             ACL_RANK[acl_of(m)],
             member_name(m),
+            declaration_sort_text(m),
+            m.strip(),
         )
     )
     return filtered
 
 
 def _merge_exposed_stored_by_name(members: list[str]) -> list[str]:
-    """Within one ACL: keep exposed stored order; insert other vars by name."""
+    """Within one ACL: keep exposed stored order; insert other vars by name.
+
+    Stored order is the memberwise initializer's parameter order, so those
+    properties are not alphabetized. Computed properties still sort by name,
+    then by declaration text.
+    """
     exposed = [m for m in members if is_exposed_stored_property(m)]
     other = sort_members(
         [m for m in members if m not in exposed],
@@ -665,7 +721,7 @@ def sort_after_body_members(members: list[str]) -> list[str]:
         + sort_members(inits, ("instance_fn",))
         + sort_members(deinits, ("instance_fn",))
         + sort_members(private_fns, ("instance_fn",))
-        + leftover
+        + sorted(leftover, key=member_order_key)
     )
 
 
@@ -850,8 +906,11 @@ def split_top_level_members(body: str) -> list[str]:
             started = False
             scan = StringLiteralState()
             while i < n:
+                # Net delta is 0 on ``#Preview("x") { Text("a") }``. A brace
+                # outside a string still opens the body.
+                saw_brace = has_brace_outside_strings(lines[i], scan)
                 delta, scan = brace_delta_outside_strings(lines[i], scan)
-                if not started and delta != 0:
+                if not started and saw_brace:
                     started = True
                 depth += delta
                 i += 1
@@ -911,8 +970,11 @@ def split_top_level_members(body: str) -> list[str]:
                 started = False
                 scan = StringLiteralState()
                 while i < n:
+                    # Net delta is 0 on ``struct Zebra {}``. A brace outside a
+                    # string still closes the declaration on this line.
+                    saw_brace = has_brace_outside_strings(lines[i], scan)
                     delta, scan = brace_delta_outside_strings(lines[i], scan)
-                    if not started and delta != 0:
+                    if not started and saw_brace:
                         started = True
                     depth += delta
                     i += 1
@@ -1675,35 +1737,143 @@ def extension_head_references_type(chunk: str, type_name: str) -> bool:
     return bool(re.search(rf"\b{re.escape(type_name)}\b", head))
 
 
+def _extension_head_parts(head: str) -> tuple[str, str, str]:
+    """Return ``(type name, conformance, where clause)`` from an extension head."""
+    match = re.search(r"\bextension\s+(.*)$", head)
+    rest = match.group(1).strip() if match else head.strip()
+    rest = rest.split("{", 1)[0].strip()
+    where = ""
+    where_at = re.search(r"\bwhere\b", rest)
+    if where_at:
+        where = rest[where_at.end() :].strip()
+        rest = rest[: where_at.start()].strip()
+    conformance = ""
+    if ":" in rest:
+        name, conformance = rest.split(":", 1)
+        name = name.strip()
+        conformance = conformance.strip()
+    else:
+        name = rest.strip()
+    return name.replace("`", ""), conformance, where
+
+
+def _unwrap_extended_type(name: str) -> tuple[str, int]:
+    """Return ``(inner name, sugar rank)``.
+
+    Sugar rank is 0 for a plain type, 1 for ``Type?``, 2 for collection sugar
+    (``[Type]``, ``Array`` / ``Set`` / ``Dictionary``).
+    """
+    name = name.strip()
+    sugar = 0
+    while name.endswith("?"):
+        sugar = max(sugar, 1)
+        name = name[:-1].rstrip()
+    bracket = re.fullmatch(r"\[(.*)\]", name)
+    if bracket:
+        return bracket.group(1).strip(), 2
+    generic = re.fullmatch(r"(?:Array|Set|Dictionary)\s*<(.*)>\s*", name)
+    if generic:
+        return generic.group(1).strip(), 2
+    return name, sugar
+
+
+def _type_path_and_generics(name: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    generics = tuple(part.lower() for part in re.findall(r"<[^<>]*>", name))
+    base = re.sub(r"<[^<>]*>", "", name)
+    parts = tuple(part.lower() for part in re.findall(r"\w+", base))
+    return parts, generics
+
+
+def extension_sort_key(chunk: str) -> tuple:
+    """Path, then plain / optional / collection, then conformance, then head.
+
+    ``Issue`` sorts before ``Issue?`` and ``[Issue]``, and that group before
+    ``Issue.Label``. ``PullRequest`` follows every ``Issue…`` path. Equal keys
+    compare the declaration, not source order.
+    """
+    head = first_code_line(chunk)
+    name, conformance, where = _extension_head_parts(head)
+    inner, sugar = _unwrap_extended_type(name)
+    parts, generics = _type_path_and_generics(inner)
+    if not parts:
+        parts = (head.lower(),)
+    return (
+        parts,
+        sugar,
+        generics,
+        conformance.lower(),
+        where.lower(),
+        head,
+        chunk.strip(),
+    )
+
+
+def _is_extension_decl(head: str) -> bool:
+    return bool(
+        re.match(
+            r"^(?:(?:private|fileprivate|public|package|open|internal)\s+)*extension\b",
+            head,
+        )
+    )
+
+
+def chunk_sort_key(chunk: str) -> tuple:
+    """Declared-name order for a file-level chunk.
+
+    Extensions use the extended-type path. Everything else uses the declared
+    identifier (``func`` / ``var`` / ``let`` / type), then the declaration line.
+    """
+    head = file_private_head(chunk)
+    if _is_extension_decl(first_code_line(chunk)) or _is_extension_decl(head):
+        return extension_sort_key(chunk)
+    match = re.search(
+        rf"\b(?:struct|class|enum|actor|protocol|func|var|let|typealias|associatedtype)\s+({SWIFT_NAME})",
+        head,
+    )
+    if match:
+        parts: tuple[str, ...] = (match.group(1).strip("`").lower(),)
+    else:
+        parts = (head.lower(),)
+    return (parts, 0, (), "", "", head, chunk.strip())
+
+
+def preview_sort_key(chunk: str) -> tuple:
+    header = ""
+    for line in chunk.splitlines():
+        stripped = line.strip()
+        if is_preview_line(stripped):
+            header = stripped
+            break
+    return (header, chunk.strip())
+
+
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
-    def rank(chunk: str) -> tuple[int, int]:
+    def key(chunk: str) -> tuple:
         if is_type_declaration_chunk(chunk) and re.search(
             rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
             first_code_line(chunk),
         ):
-            return (0, 0)
-        if is_extension_chunk(chunk) and extension_head_references_type(chunk, stem):
-            return (0, 1)
-        return (1, 0)
+            rank = (0, 0)
+        elif is_extension_chunk(chunk) and extension_head_references_type(chunk, stem):
+            rank = (0, 1)
+        else:
+            rank = (1, 0)
+        return (rank, chunk_sort_key(chunk))
 
-    indexed = list(enumerate(chunks))
-    indexed.sort(key=lambda pair: (rank(pair[1]), pair[0]))
-    return [chunk for _, chunk in indexed]
-
-
-def preamble_sort_name(chunk: str) -> str:
-    head = file_private_head(chunk)
-    m = re.search(
-        rf"\b(?:struct|class|enum|actor|protocol|extension)\s+({SWIFT_NAME})",
-        head,
-    )
-    if m:
-        return m.group(1).strip("`").lower()
-    return head[:24].lower()
+    return sorted(chunks, key=key)
 
 
 def sort_preamble_chunks(chunks: list[str]) -> list[str]:
-    return sorted(chunks, key=preamble_sort_name)
+    return sorted(chunks, key=chunk_sort_key)
+
+
+def sort_tail_chunks(chunks: list[str]) -> list[str]:
+    """Non-preview leftovers by name, then ``#Preview`` blocks by header."""
+    others = [chunk for chunk in chunks if not is_preview_chunk(chunk)]
+    previews = [chunk for chunk in chunks if is_preview_chunk(chunk)]
+    others.sort(key=chunk_sort_key)
+    previews.sort(key=preview_sort_key)
+    return others + previews
 
 
 def pure_debug_if_interior(chunk: str) -> str | None:
@@ -1891,7 +2061,10 @@ def reorder_file_layout(text: str, path: Path) -> str:
 
     mains = sort_main_file_chunks(mains, stem)
     ordered = coalesce_adjacent_debug_chunks(
-        sort_preamble_chunks(preamble) + mains + post + tail
+        sort_preamble_chunks(preamble)
+        + mains
+        + sorted(post, key=chunk_sort_key)
+        + sort_tail_chunks(tail)
     )
     new_rest = join_members(ordered)
     if not new_rest:
@@ -1921,6 +2094,7 @@ def reorder_swiftui_body(body: str) -> str:
     )
     consumed = set(before) | set(after)
     leftover = [m for m in other if m not in consumed]
+    leftover.sort(key=member_order_key)
     return join_members(before + [body_member] + after + leftover) or body
 
 
@@ -1941,6 +2115,7 @@ def reorder_plain_type_body(body: str, is_enum: bool) -> str:
     )
     consumed |= set(after)
     leftover = [m for m in remaining if m not in consumed]
+    leftover.sort(key=member_order_key)
 
     return join_members(before + enum_cases + after + leftover) or body
 

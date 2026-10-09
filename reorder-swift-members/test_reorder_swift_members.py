@@ -886,8 +886,10 @@ struct CommitRow: View {
     func_at = reordered.index("func previewCommit")
     other_at = reordered.index("let otherJSON")
     squash_at = reordered.index("let squashJSON")
-    self.assertLess(func_at, other_at)
-    self.assertLess(other_at, squash_at)
+    # Preamble helpers sort by declared name, not by the ``private func`` /
+    # ``private let`` prefix and not by source order.
+    self.assertLess(other_at, func_at)
+    self.assertLess(func_at, squash_at)
     self.assertLess(reordered.index("#endif"), reordered.index("struct CommitRow"))
     self.assertEqual(reordered.count("#if DEBUG"), 1)
     between = reordered[func_at:squash_at]
@@ -1367,6 +1369,169 @@ struct Sample {
       path.write_text(original)
       self.assertEqual(reorder.main(["--dry-run", str(path)]), 0)
       self.assertEqual(path.read_text(), original)
+
+
+class PedanticOrderTests(unittest.TestCase):
+  def test_inits_sort_by_failable_rank_then_signature(self) -> None:
+    body = """
+  init(zebra: Int) {}
+
+  init?(apple: Int) {}
+
+  init!(zebra: Int) {}
+
+  init(apple: Int) {}
+"""
+    reordered = reorder.reorder_plain_type_body(body, is_enum=False)
+    apple = reordered.index("init(apple: Int) {}")
+    zebra = reordered.index("init(zebra: Int) {}")
+    bang = reordered.index("init!(zebra: Int) {}")
+    optional = reordered.index("init?(apple: Int) {}")
+    self.assertLess(apple, zebra)
+    self.assertLess(zebra, bang)
+    self.assertLess(bang, optional)
+    self.assertEqual(reordered, reorder.reorder_plain_type_body(reordered, is_enum=False))
+
+  def test_same_name_overloads_sort_by_signature(self) -> None:
+    body = """
+  func open(zebra: Int) {}
+
+  func open(apple: Int) {}
+"""
+    reordered = reorder.reorder_plain_type_body(body, is_enum=False)
+    self.assertLess(reordered.index("func open(apple:"), reordered.index("func open(zebra:"))
+    self.assertEqual(reordered, reorder.reorder_plain_type_body(reordered, is_enum=False))
+
+  def test_static_overloads_sort_by_signature(self) -> None:
+    body = """
+  static func parse(zebra: Int) -> Self { self }
+
+  static func parse(apple: Int) -> Self { self }
+"""
+    reordered = reorder.reorder_plain_type_body(body, is_enum=False)
+    self.assertLess(
+      reordered.index("func parse(apple:"),
+      reordered.index("func parse(zebra:"),
+    )
+
+  def test_extensions_sort_by_path_not_source_order(self) -> None:
+    text = """\
+enum Issue {
+  case a
+}
+
+extension PullRequest {
+  var a: Int { 0 }
+}
+
+extension Issue.User {
+  var a: Int { 0 }
+}
+
+extension Issue: Hashable {
+  func hash(into hasher: inout Hasher) {}
+}
+
+extension Issue {
+  var b: Int { 0 }
+}
+
+extension Issue: Equatable {
+  static func == (lhs: Issue, rhs: Issue) -> Bool { true }
+}
+
+extension [Issue] {
+  var c: Int { 0 }
+}
+
+extension Issue? {
+  var d: Int { 0 }
+}
+"""
+    reordered = reorder.reorder_file_layout(text, Path("Issue.swift"))
+    positions = [
+      reordered.index("enum Issue"),
+      reordered.index("extension Issue {"),
+      reordered.index("extension Issue: Equatable"),
+      reordered.index("extension Issue: Hashable"),
+      reordered.index("extension Issue?"),
+      reordered.index("extension [Issue]"),
+      reordered.index("extension Issue.User"),
+      reordered.index("extension PullRequest"),
+    ]
+    self.assertEqual(positions, sorted(positions))
+    self.assertEqual(reordered, reorder.reorder_file_layout(reordered, Path("Issue.swift")))
+
+  def test_preamble_helpers_sort_by_declared_name(self) -> None:
+    text = """\
+private let zebra = 1
+
+private func apple() -> Int { 0 }
+
+private extension Move.Castling {
+  var x: Int { 0 }
+}
+
+private extension Move {
+  var y: Int { 0 }
+}
+"""
+    reordered = reorder.reorder_file_layout(text, Path("Board.swift"))
+    positions = [
+      reordered.index("func apple"),
+      reordered.index("extension Move {"),
+      reordered.index("extension Move.Castling"),
+      reordered.index("let zebra"),
+    ]
+    self.assertEqual(positions, sorted(positions))
+    self.assertEqual(reordered, reorder.reorder_file_layout(reordered, Path("Board.swift")))
+
+  def test_extra_main_types_sort_by_name(self) -> None:
+    text = """\
+struct Zebra {}
+
+struct Apple {}
+
+struct Farm {
+  var name = ""
+}
+"""
+    reordered = reorder.reorder_file_layout(text, Path("Farm.swift"))
+    farm = reordered.index("struct Farm")
+    apple = reordered.index("struct Apple")
+    zebra = reordered.index("struct Zebra")
+    self.assertLess(farm, apple)
+    self.assertLess(apple, zebra)
+
+  def test_previews_sort_by_header(self) -> None:
+    text = """\
+import SwiftUI
+
+struct Row: View {
+  var body: some View { Text("hi") }
+}
+
+#Preview("Large") {
+  Text("b")
+}
+
+#Preview("Default") {
+  Text("a")
+}
+"""
+    path = Path("Row.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    self.assertLess(reordered.index("struct Row"), reordered.index('#Preview("Default")'))
+    self.assertLess(reordered.index('#Preview("Default")'), reordered.index('#Preview("Large")'))
+    self.assertEqual(reordered, reorder.reorder_file_layout(reordered, path))
+
+  def test_exposed_stored_properties_stay_in_declaration_order(self) -> None:
+    body = """
+  public let zebra: Int
+  public let apple: Int
+"""
+    reordered = reorder.reorder_plain_type_body(body, is_enum=False)
+    self.assertLess(reordered.index("let zebra"), reordered.index("let apple"))
 
 
 if __name__ == "__main__":
