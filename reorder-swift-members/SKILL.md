@@ -75,7 +75,7 @@ Extensions on shared types (`View`, `String`, models, etc.) belong in an `Extens
 
 **After `body`:**
 
-1. Non-private instance vars/lets — public, then package, then internal. Within each ACL, exposed **stored** properties keep relative declaration order; other vars (e.g. computed) insert by name (`contains…` before `download…`). An internal `pathComponent` stays after all public vars/lets.
+1. Non-private instance vars/lets — public, then package, then internal. A `subscript` sorts before every var/let of the same ACL. Within each ACL, exposed **stored** properties keep relative declaration order; other vars (e.g. computed) insert by name (`contains…` before `download…`). An internal `pathComponent` stays after all public vars/lets.
 2. Private instance vars/lets
 3. Internal instance funcs
 4. `init` (including failable `init?` / `init!`)

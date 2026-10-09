@@ -39,6 +39,55 @@ struct SampleView: View {
 '''
 
 
+class SubscriptOrderTests(unittest.TestCase):
+  def test_subscript_precedes_vars_of_the_same_acl(self) -> None:
+    body = """
+  public var endIndex: Int { 0 }
+
+  public var startIndex: Int { 0 }
+
+  private var zebra: Int { 0 }
+
+  public subscript(position: Int) -> Int { position }
+
+  private subscript(i: Int) -> Int { i }
+
+  public func index(after i: Int) -> Int { i }
+"""
+    new_body = reorder.reorder_plain_type_body(body, is_enum=False)
+    public_subscript = new_body.index("public subscript")
+    end_index = new_body.index("public var endIndex")
+    start_index = new_body.index("public var startIndex")
+    private_subscript = new_body.index("private subscript")
+    zebra = new_body.index("private var zebra")
+    index_after = new_body.index("func index")
+    self.assertLess(public_subscript, end_index)
+    self.assertLess(end_index, start_index)
+    self.assertLess(start_index, private_subscript)
+    self.assertLess(private_subscript, zebra)
+    self.assertLess(zebra, index_after)
+    self.assertFalse(reorder.is_exposed_stored_property("  public subscript(position: Int) -> Int { position }\n"))
+
+  def test_static_subscript_precedes_static_vars_of_the_same_acl(self) -> None:
+    body = """
+  static var name: String { "" }
+
+  private static var secret: Int { 0 }
+
+  static subscript(i: Int) -> Int { i }
+
+  private static subscript(i: Int) -> Int { i }
+"""
+    new_body = reorder.reorder_plain_type_body(body, is_enum=False)
+    static_subscript = new_body.index("static subscript")
+    name = new_body.index("static var name")
+    private_subscript = new_body.index("private static subscript")
+    secret = new_body.index("private static var secret")
+    self.assertLess(static_subscript, name)
+    self.assertLess(name, private_subscript)
+    self.assertLess(private_subscript, secret)
+
+
 class ComputedVarClassificationTests(unittest.TestCase):
   def test_getter_with_inner_let_is_computed(self) -> None:
     member = """\

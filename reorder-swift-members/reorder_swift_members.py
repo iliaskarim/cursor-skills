@@ -8,9 +8,10 @@ SwiftUI types (View, ViewModifier, ToolbarContent):
   After ``body`` (and the instance-member section on other types): internal instance
   variables, private variables, internal functions, ``init``, ``deinit``, private
   functions. Within the non-private variable group, ACL outranks name (public,
-  then package, then internal). Exposed stored properties keep relative
-  declaration order within each ACL; other vars in that ACL (computed, etc.)
-  insert by name. Other member groups sort by ACL, then name.
+  then package, then internal). A ``subscript`` sorts before the vars of its
+  ACL. Exposed stored properties keep relative declaration order within each
+  ACL; other vars in that ACL (computed, etc.) insert by name. Other member
+  groups sort by ACL, then name.
 
 Other types (struct, class, enum, actor, protocol):
   Nested types, then static vars/lets, then static funcs (ACL, then name
@@ -485,6 +486,11 @@ def is_typealias_member(text: str) -> bool:
     )
 
 
+def is_subscript_member(text: str) -> bool:
+    """A function written without ``func``, such as ``subscript``."""
+    return bool(re.search(r"\bsubscript\b", first_code_line(text)))
+
+
 def member_kind(text: str) -> str:
     stripped = first_code_line(text)
     if is_type_member_line(stripped) or is_typealias_member(text):
@@ -492,7 +498,7 @@ def member_kind(text: str) -> str:
     if re.search(r"\bstatic\b", stripped):
         if re.search(r"\bfunc\b", stripped):
             return "static_fn"
-        if re.search(r"\b(?:var|let)\b", stripped):
+        if re.search(r"\b(?:var|let)\b", stripped) or re.search(r"\bsubscript\b", stripped):
             return "static_var"
     if INIT_DECL_RE.match(stripped):
         return "instance_fn"
@@ -549,6 +555,8 @@ def is_computed_instance_var(text: str) -> bool:
 def is_exposed_stored_property(text: str) -> bool:
     if member_kind(text) != "instance_var":
         return False
+    if is_subscript_member(text):
+        return False
     if is_private_member(text):
         return False
     if is_computed_instance_var(text):
@@ -574,6 +582,7 @@ def sort_members(members: list[str], kinds: tuple[str, ...]) -> list[str]:
         key=lambda m: (
             ACL_RANK[acl_of(m)],
             VAR_BEFORE_FN_RANK.get(member_kind(m), 0),
+            0 if is_subscript_member(m) else 1,
             member_name(m),
         )
     )
@@ -591,6 +600,7 @@ def sort_before_body_members(members: list[str]) -> list[str]:
         key=lambda m: (
             BEFORE_BODY_MEMBER_RANK[member_kind(m)],
             ACL_RANK[acl_of(m)],
+            0 if is_subscript_member(m) else 1,
             member_name(m),
         )
     )
@@ -634,8 +644,13 @@ def sort_internal_vars(members: list[str]) -> list[str]:
     result: list[str] = []
     for acl in ("public", "package", "internal"):
         group = by_acl[acl]
-        if group:
-            result.extend(_merge_exposed_stored_by_name(group))
+        if not group:
+            continue
+        subscripts = [m for m in group if is_subscript_member(m)]
+        rest = [m for m in group if not is_subscript_member(m)]
+        subscripts.sort(key=member_name)
+        result.extend(subscripts)
+        result.extend(_merge_exposed_stored_by_name(rest))
     return result
 
 
