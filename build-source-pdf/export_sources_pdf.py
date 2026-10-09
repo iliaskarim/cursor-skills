@@ -58,12 +58,6 @@ def _ensure_venv_and_reexec() -> None:
     os.execve(str(py), [str(py), str(Path(__file__).resolve()), *sys.argv[1:]], new_env)
 
 
-_ensure_venv_and_reexec()
-
-from fpdf import FPDF  # noqa: E402
-from fpdf.enums import Align, WrapMode  # noqa: E402
-
-
 def resolve_font() -> Path:
     for p in SF_MONO_BOLD_CANDIDATES:
         if p.is_file():
@@ -138,21 +132,24 @@ def build_combined_text(repo: Path, title: str) -> str:
     return "\n".join(lines) + "\n" + body
 
 
-class SourceListingPDF(FPDF):
-    """Letter PDF with SF Mono Bold body and page numbers bottom-left."""
-
-    def __init__(self, font_path: Path) -> None:
-        super().__init__(orientation="P", unit="mm", format="Letter")
-        self.add_font("SFMonoBold", "", str(font_path))
-
-    def footer(self) -> None:
-        self.set_y(-FOOTER_MARGIN_MM)
-        self.set_font("SFMonoBold", size=BODY_PT)
-        self.set_x(self.l_margin)
-        self.cell(0, FOOTER_MARGIN_MM - 2, str(self.page_no()), align="L")
-
-
 def write_pdf(text: str, font_path: Path, out_pdf: Path) -> None:
+    _ensure_venv_and_reexec()
+    from fpdf import FPDF
+    from fpdf.enums import Align, WrapMode
+
+    class SourceListingPDF(FPDF):
+        """Letter PDF with SF Mono Bold body and page numbers bottom-left."""
+
+        def __init__(self, font_path: Path) -> None:
+            super().__init__(orientation="P", unit="mm", format="Letter")
+            self.add_font("SFMonoBold", "", str(font_path))
+
+        def footer(self) -> None:
+            self.set_y(-FOOTER_MARGIN_MM)
+            self.set_font("SFMonoBold", size=BODY_PT)
+            self.set_x(self.l_margin)
+            self.cell(0, FOOTER_MARGIN_MM - 2, str(self.page_no()), align="L")
+
     pdf = SourceListingPDF(font_path)
     pdf.set_auto_page_break(auto=True, margin=FOOTER_MARGIN_MM)
     pdf.set_margins(left=10, top=10, right=10)
@@ -188,7 +185,6 @@ def write_pdf(text: str, font_path: Path, out_pdf: Path) -> None:
 def main() -> int:
     repo = _repo_root()
     slug = _package_title_slug(repo)
-    font_path = resolve_font()
 
     paths = swift_paths(repo)
     pkg_swift = repo / "Package.swift"
@@ -196,6 +192,8 @@ def main() -> int:
     if not has_any:
         print("No Package.swift or Swift sources under Sources/ Tests/.", file=sys.stderr)
         return 1
+
+    font_path = resolve_font()
 
     out_txt = repo / f"{slug}-all-sources.txt"
     out_pdf = repo / f"{slug}-all-sources.pdf"

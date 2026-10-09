@@ -1,0 +1,42 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' test; do
+            found=1
+            echo "Running ${test#./}"
+            python3 "$test"
+          done < <(find . -type f -name 'test_*.py' \
+            -not -path './.git/*' \
+            -not -path '*/__pycache__/*' \
+            -print0 | sort -z)
+          if [[ "$found" -eq 0 ]]; then
+            echo "No test_*.py files found."
+            exit 1
+          fi
