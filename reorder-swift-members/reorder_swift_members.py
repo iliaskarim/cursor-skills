@@ -26,7 +26,8 @@ Enum cases (every enum, including nested):
   ``case`` statements.
 
 File layout (per file, after imports):
-  private/fileprivate helpers (sorted by name), main type(s), other extensions, previews.
+  private/fileprivate helpers (sorted by name; ``Type?`` follows ``Type``),
+  main type(s), other extensions, previews.
   A private/fileprivate extension whose head names the file's type stays with
   the other extensions. A nested type (``private extension Board.Vector``)
   keeps source order among those extensions. Collection or optional sugar
@@ -1728,8 +1729,27 @@ def preamble_sort_name(chunk: str) -> str:
     return head[:24].lower()
 
 
+def preamble_sort_key(chunk: str) -> tuple[str, int]:
+    """Name, then ``0`` for a plain type and ``1`` for ``Type?``.
+
+    ``private extension Square?`` sorts after ``private extension Square``.
+    Dotted names that share a prefix (``Move`` / ``Move.Castling``) keep
+    source order.
+    """
+    name = preamble_sort_name(chunk)
+    head = file_private_head(chunk).split("{", 1)[0]
+    optional = bool(
+        re.search(
+            rf"\b(?:extension|struct|class|enum|actor|protocol)\s+{re.escape(name)}\s*\?",
+            head,
+            re.IGNORECASE,
+        )
+    )
+    return (name, int(optional))
+
+
 def sort_preamble_chunks(chunks: list[str]) -> list[str]:
-    return sorted(chunks, key=preamble_sort_name)
+    return sorted(chunks, key=preamble_sort_key)
 
 
 def pure_debug_if_interior(chunk: str) -> str | None:

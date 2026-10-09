@@ -1215,6 +1215,51 @@ extension Board.Status: CustomStringConvertible {
     twice = reorder.reorder_file_layout(reordered, path)
     self.assertEqual(reordered, twice)
 
+  def test_optional_extension_follows_plain_type(self) -> None:
+    """``Square?`` sorts after ``Square`` even when it led the file."""
+    text = """\
+private extension Move {
+  func transforms() -> Int { 0 }
+}
+
+private extension Square? {
+  static func + (lhs: Self, rhs: Int) -> Self { lhs }
+}
+
+private extension Move.Translation {
+  func matches() -> Bool { false }
+}
+
+private extension Piece {
+  func paths() -> Int { 0 }
+}
+
+private extension Square {
+  func step() -> Int { 0 }
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+  }
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    move_at = reordered.index("private extension Move {")
+    translation_at = reordered.index("private extension Move.Translation")
+    piece_at = reordered.index("private extension Piece")
+    square_at = reordered.index("private extension Square {")
+    optional_at = reordered.index("private extension Square?")
+    board_at = reordered.index("public struct Board")
+    self.assertLess(move_at, translation_at)
+    self.assertLess(translation_at, piece_at)
+    self.assertLess(piece_at, square_at)
+    self.assertLess(square_at, optional_at)
+    self.assertLess(optional_at, board_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
 
 class ProtocolBodyReorderTests(unittest.TestCase):
   def test_wrapped_return_type_stays_with_func_body(self) -> None:

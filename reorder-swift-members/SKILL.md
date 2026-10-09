@@ -52,7 +52,7 @@ Imports stay first, including isolated ``#if DEBUG`` / ``#endif`` wrappers that 
 
 Per file:
 
-1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by name within this group
+1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by name within this group. An optional form sorts after the plain type (`private extension Square`, then `private extension Square?`). Dotted names that share a prefix (`Move`, `Move.Castling`) keep source order.
 2. Main type(s) the file is named for (`struct` / `class` / `enum` / `actor` / `protocol`, or in `Extensions/` an `extension` on the filename type when there is no primary declaration)
 3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types). A `private` / `fileprivate` extension whose head names the file’s type stays here too. A nested type (`private extension Board.Vector`) keeps source order among those extensions. Collection or optional sugar (`private extension [Board.Vector]`, `Board.Vector?`) sorts after the file type’s own extensions, so it stays below `extension Board: Collection`. It is not a preamble helper.
 4. `#Preview` blocks last
