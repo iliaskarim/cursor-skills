@@ -39,6 +39,55 @@ struct SampleView: View {
 '''
 
 
+class SubscriptOrderTests(unittest.TestCase):
+  def test_subscript_precedes_vars_of_the_same_acl(self) -> None:
+    body = """
+  public var endIndex: Int { 0 }
+
+  public var startIndex: Int { 0 }
+
+  private var zebra: Int { 0 }
+
+  public subscript(position: Int) -> Int { position }
+
+  private subscript(i: Int) -> Int { i }
+
+  public func index(after i: Int) -> Int { i }
+"""
+    new_body = reorder.reorder_plain_type_body(body, is_enum=False)
+    public_subscript = new_body.index("public subscript")
+    end_index = new_body.index("public var endIndex")
+    start_index = new_body.index("public var startIndex")
+    private_subscript = new_body.index("private subscript")
+    zebra = new_body.index("private var zebra")
+    index_after = new_body.index("func index")
+    self.assertLess(public_subscript, end_index)
+    self.assertLess(end_index, start_index)
+    self.assertLess(start_index, private_subscript)
+    self.assertLess(private_subscript, zebra)
+    self.assertLess(zebra, index_after)
+    self.assertFalse(reorder.is_exposed_stored_property("  public subscript(position: Int) -> Int { position }\n"))
+
+  def test_static_subscript_precedes_static_vars_of_the_same_acl(self) -> None:
+    body = """
+  static var name: String { "" }
+
+  private static var secret: Int { 0 }
+
+  static subscript(i: Int) -> Int { i }
+
+  private static subscript(i: Int) -> Int { i }
+"""
+    new_body = reorder.reorder_plain_type_body(body, is_enum=False)
+    static_subscript = new_body.index("static subscript")
+    name = new_body.index("static var name")
+    private_subscript = new_body.index("private static subscript")
+    secret = new_body.index("private static var secret")
+    self.assertLess(static_subscript, name)
+    self.assertLess(name, private_subscript)
+    self.assertLess(private_subscript, secret)
+
+
 class ComputedVarClassificationTests(unittest.TestCase):
   def test_getter_with_inner_let_is_computed(self) -> None:
     member = """\
@@ -1094,6 +1143,255 @@ enum DebugNetworkDelay {
       text = path.read_text()
       self.assertLess(text.index("import Foundation"), text.index("enum DebugNetworkDelay"))
       self.assertFalse(text.rstrip().endswith("import Foundation\n#endif"))
+
+
+class PrivateExtensionOfNestedTypeTests(unittest.TestCase):
+  def test_array_of_nested_type_stays_after_main_type(self) -> None:
+    """``private extension [Board.Vector]`` is an extension of a nested type.
+
+    The ``[`` sugar is still an extension of ``Array``, but the element type
+    is a subtype of the file's primary type, so the chunk stays after
+    ``Board``. Nested extensions sort by path (``Status`` before ``Vector``)
+    even when ``Vector`` led. Unrelated private extensions still sort into
+    the preamble. A second pass is a no-op.
+    """
+    text = """\
+private extension Square {
+  func step() -> Int { 0 }
+}
+
+private extension Piece {
+  func paths() -> [Board.Vector] { [] }
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+
+    let ranks: Int
+  }
+
+  enum Status {
+    case check
+  }
+}
+
+private extension Board.Vector {
+  var length: Int { files + ranks }
+}
+
+extension Board.Status: CustomStringConvertible {
+  public var description: String { "" }
+}
+
+private extension [Board.Vector] {
+  static let cardinalUnitVectors: Self = []
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    piece_at = reordered.index("private extension Piece")
+    square_at = reordered.index("private extension Square")
+    board_at = reordered.index("public struct Board")
+    status_at = reordered.index("extension Board.Status")
+    vector_at = reordered.index("private extension Board.Vector")
+    array_at = reordered.index("private extension [Board.Vector]")
+    self.assertLess(piece_at, square_at)
+    self.assertLess(square_at, board_at)
+    self.assertLess(board_at, status_at)
+    self.assertLess(status_at, vector_at)
+    self.assertLess(vector_at, array_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_fileprivate_array_extension_stays_after_main_type(self) -> None:
+    text = """\
+fileprivate extension Piece {
+  func paths() -> Int { 0 }
+}
+
+struct Board {
+  struct Vector {
+    let files: Int
+  }
+}
+
+fileprivate extension [Board.Vector] {
+  static let diagonalUnitVectors: Self = []
+}
+"""
+    reordered = reorder.reorder_file_layout(text, Path("Board.swift"))
+    self.assertLess(
+        reordered.index("fileprivate extension Piece"),
+        reordered.index("struct Board"),
+    )
+    self.assertLess(
+        reordered.index("struct Board"),
+        reordered.index("fileprivate extension [Board.Vector]"),
+    )
+
+  def test_array_extension_follows_primary_type_extensions(self) -> None:
+    """Sugar stays below ``Board``'s own extensions.
+
+    ``extension Board`` sorts before ``extension Board.Status`` even when
+    ``Status`` led, and ``[Board.Vector]`` stays last.
+    """
+    text = """\
+private extension [Board.Vector] {
+  static let cardinalUnitVectors: Self = []
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+
+    let ranks: Int
+  }
+}
+
+extension Board.Status: CustomStringConvertible {
+  public var description: String { "" }
+}
+
+extension Board: Collection {
+  public var startIndex: Int { 0 }
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    board_at = reordered.index("public struct Board")
+    collection_at = reordered.index("extension Board: Collection")
+    status_at = reordered.index("extension Board.Status")
+    array_at = reordered.index("private extension [Board.Vector]")
+    self.assertLess(board_at, collection_at)
+    self.assertLess(collection_at, status_at)
+    self.assertLess(status_at, array_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_optional_extension_follows_plain_type(self) -> None:
+    """``Square?`` sorts after ``Square``, and ``Move`` before ``Move.Translation``.
+
+    Both hold when the nested extension and the optional led the file.
+    """
+    text = """\
+private extension Move.Translation {
+  func matches() -> Bool { false }
+}
+
+private extension Square? {
+  static func + (lhs: Self, rhs: Int) -> Self { lhs }
+}
+
+private extension Move {
+  func transforms() -> Int { 0 }
+}
+
+private extension Piece {
+  func paths() -> Int { 0 }
+}
+
+private extension Square {
+  func step() -> Int { 0 }
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+  }
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    move_at = reordered.index("private extension Move {")
+    translation_at = reordered.index("private extension Move.Translation")
+    piece_at = reordered.index("private extension Piece")
+    square_at = reordered.index("private extension Square {")
+    optional_at = reordered.index("private extension Square?")
+    board_at = reordered.index("public struct Board")
+    self.assertLess(move_at, translation_at)
+    self.assertLess(translation_at, piece_at)
+    self.assertLess(piece_at, square_at)
+    self.assertLess(square_at, optional_at)
+    self.assertLess(optional_at, board_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_conformances_group_with_nested_types(self) -> None:
+    """``Issue`` stays above ``Issue.Label``, then the ``PullRequest`` group.
+
+    ``ConversationRecord`` in the conformance list is not collection sugar.
+    Path order wins over source order. A second pass is a no-op.
+    """
+    text = """\
+protocol ConversationRecord {
+  associatedtype Label
+}
+
+protocol ConversationRecordLabel {}
+
+protocol ConversationRecordUser {}
+
+extension Issue: ConversationRecord {}
+
+extension PullRequest: ConversationRecord {}
+
+extension Issue.User: ConversationRecordUser {}
+
+extension PullRequest.User: ConversationRecordUser {}
+
+extension Issue.Label: ConversationRecordLabel {}
+
+extension PullRequest.Label: ConversationRecordLabel {}
+"""
+    path = Path("ConversationRecord.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    order = [
+      "protocol ConversationRecord {",
+      "protocol ConversationRecordLabel",
+      "protocol ConversationRecordUser",
+      "extension Issue: ConversationRecord",
+      "extension Issue.Label",
+      "extension Issue.User",
+      "extension PullRequest: ConversationRecord",
+      "extension PullRequest.Label",
+      "extension PullRequest.User",
+    ]
+    positions = [reordered.index(needle) for needle in order]
+    self.assertEqual(positions, sorted(positions))
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_where_clause_sugar_stays_below_primary_extensions(self) -> None:
+    """``Binding where Value == [AppRoute]`` is sugar, not an ``AppRoute`` extension."""
+    text = """\
+enum AppRoute {
+  case root
+}
+
+extension Binding where Value == [AppRoute] {
+  func open() {}
+}
+
+extension AppRoute: Equatable {
+  static func == (lhs: Self, rhs: Self) -> Bool { false }
+}
+
+extension [AppRoute] {
+  func pop() {}
+}
+"""
+    path = Path("AppRoute.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    route_at = reordered.index("enum AppRoute")
+    equatable_at = reordered.index("extension AppRoute: Equatable")
+    array_at = reordered.index("extension [AppRoute]")
+    binding_at = reordered.index("extension Binding")
+    self.assertLess(route_at, equatable_at)
+    self.assertLess(equatable_at, binding_at)
+    self.assertLess(binding_at, array_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
 
 
 class ProtocolBodyReorderTests(unittest.TestCase):

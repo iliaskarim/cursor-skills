@@ -8,9 +8,10 @@ SwiftUI types (View, ViewModifier, ToolbarContent):
   After ``body`` (and the instance-member section on other types): internal instance
   variables, private variables, internal functions, ``init``, ``deinit``, private
   functions. Within the non-private variable group, ACL outranks name (public,
-  then package, then internal). Exposed stored properties keep relative
-  declaration order within each ACL; other vars in that ACL (computed, etc.)
-  insert by name. Other member groups sort by ACL, then name.
+  then package, then internal). A ``subscript`` sorts before the vars of its
+  ACL. Exposed stored properties keep relative declaration order within each
+  ACL; other vars in that ACL (computed, etc.) insert by name. Other member
+  groups sort by ACL, then name.
 
 Other types (struct, class, enum, actor, protocol):
   Nested types, then static vars/lets, then static funcs (ACL, then name
@@ -26,7 +27,18 @@ Enum cases (every enum, including nested):
   ``case`` statements.
 
 File layout (per file, after imports):
-  private/fileprivate helpers (sorted by name), main type(s), other extensions, previews.
+  private/fileprivate helpers (sorted by name; ``Type?`` follows ``Type``),
+  main type(s), other extensions, previews.
+  A private/fileprivate extension whose head names the file's type stays with
+  the other extensions. Extensions that share a root type stay together, parent
+  before nested types (``extension Issue`` above ``extension Issue.Label`` and
+  ``extension Issue.User``). Distinct roots keep the order they first appear.
+  A conformance (``extension Issue: ConversationRecord``) is not sugar.
+  Collection or optional sugar
+  (``private extension [Board.Vector]``, ``Board.Vector?``) sorts after the
+  file type's own extensions, so it stays below ``extension Board: Collection``.
+  It is not a preamble helper. Unrelated private extensions still sort into
+  the preamble.
   A ``protocol`` is a main type, same as ``struct`` / ``class`` / ``enum`` / ``actor``,
   so conformances stay below the protocol the file is named for.
   Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
@@ -477,6 +489,11 @@ def is_typealias_member(text: str) -> bool:
     )
 
 
+def is_subscript_member(text: str) -> bool:
+    """A function written without ``func``, such as ``subscript``."""
+    return bool(re.search(r"\bsubscript\b", first_code_line(text)))
+
+
 def member_kind(text: str) -> str:
     stripped = first_code_line(text)
     if is_type_member_line(stripped) or is_typealias_member(text):
@@ -484,7 +501,7 @@ def member_kind(text: str) -> str:
     if re.search(r"\bstatic\b", stripped):
         if re.search(r"\bfunc\b", stripped):
             return "static_fn"
-        if re.search(r"\b(?:var|let)\b", stripped):
+        if re.search(r"\b(?:var|let)\b", stripped) or re.search(r"\bsubscript\b", stripped):
             return "static_var"
     if INIT_DECL_RE.match(stripped):
         return "instance_fn"
@@ -541,6 +558,8 @@ def is_computed_instance_var(text: str) -> bool:
 def is_exposed_stored_property(text: str) -> bool:
     if member_kind(text) != "instance_var":
         return False
+    if is_subscript_member(text):
+        return False
     if is_private_member(text):
         return False
     if is_computed_instance_var(text):
@@ -566,6 +585,7 @@ def sort_members(members: list[str], kinds: tuple[str, ...]) -> list[str]:
         key=lambda m: (
             ACL_RANK[acl_of(m)],
             VAR_BEFORE_FN_RANK.get(member_kind(m), 0),
+            0 if is_subscript_member(m) else 1,
             member_name(m),
         )
     )
@@ -583,6 +603,7 @@ def sort_before_body_members(members: list[str]) -> list[str]:
         key=lambda m: (
             BEFORE_BODY_MEMBER_RANK[member_kind(m)],
             ACL_RANK[acl_of(m)],
+            0 if is_subscript_member(m) else 1,
             member_name(m),
         )
     )
@@ -626,8 +647,13 @@ def sort_internal_vars(members: list[str]) -> list[str]:
     result: list[str] = []
     for acl in ("public", "package", "internal"):
         group = by_acl[acl]
-        if group:
-            result.extend(_merge_exposed_stored_by_name(group))
+        if not group:
+            continue
+        subscripts = [m for m in group if is_subscript_member(m)]
+        rest = [m for m in group if not is_subscript_member(m)]
+        subscripts.sort(key=member_name)
+        result.extend(subscripts)
+        result.extend(_merge_exposed_stored_by_name(rest))
     return result
 
 
@@ -1444,7 +1470,11 @@ def is_private_fileprivate_chunk(text: str) -> bool:
 
 
 def is_extension_chunk(text: str) -> bool:
-    return first_code_line(text).startswith("extension ")
+    """True for ``extension`` and ``private`` / ``fileprivate extension``."""
+    head = first_code_line(text)
+    return bool(
+        re.match(r"^(?:(?:private|fileprivate)\s+)?extension\b", head)
+    )
 
 
 def is_type_declaration_chunk(text: str) -> bool:
@@ -1675,6 +1705,32 @@ def extension_head_references_type(chunk: str, type_name: str) -> bool:
     return bool(re.search(rf"\b{re.escape(type_name)}\b", head))
 
 
+def extension_wraps_file_type_in_sugar(chunk: str, stem: str) -> bool:
+    """True for ``[Board.Vector]`` / ``Board.Vector?`` / ``Array<Board>``.
+
+    A direct ``Board`` or ``Board.Status`` extension is not sugar. Those stay
+    ahead of a collection or optional wrapped around the file type, so
+    ``private extension [Board.Vector]`` sorts below ``extension Board: Collection``.
+    A conformance is not sugar: ``extension Issue: ConversationRecord`` extends
+    ``Issue``. A ``where`` clause on some other type
+    (``Binding where Value == [AppRoute]``) is sugar.
+    """
+    if not is_extension_chunk(chunk):
+        return False
+    head = first_code_line(chunk).split("{", 1)[0]
+    name = extension_extended_type_name(head).replace("`", "")
+    if not name:
+        return False
+    bare = name[:-1].rstrip() if name.endswith("?") else name
+    if re.fullmatch(rf"{re.escape(stem)}(?:\.\w+)*", bare):
+        return bare != name
+    if re.search(rf"\b{re.escape(stem)}\b", name):
+        return True
+    return bool(
+        re.search(r"\bwhere\b", head) and re.search(rf"\b{re.escape(stem)}\b", head)
+    )
+
+
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
     def rank(chunk: str) -> tuple[int, int]:
         if is_type_declaration_chunk(chunk) and re.search(
@@ -1688,7 +1744,8 @@ def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
 
     indexed = list(enumerate(chunks))
     indexed.sort(key=lambda pair: (rank(pair[1]), pair[0]))
-    return [chunk for _, chunk in indexed]
+    ordered = [chunk for _, chunk in indexed]
+    return _sort_extension_runs(ordered)
 
 
 def preamble_sort_name(chunk: str) -> str:
@@ -1702,8 +1759,79 @@ def preamble_sort_name(chunk: str) -> str:
     return head[:24].lower()
 
 
+def extension_type_sort_key(chunk: str) -> tuple[tuple[str, ...], int]:
+    """Extended-type path, then ``1`` when that type is optional.
+
+    ``Issue`` sorts before ``Issue.Label``, and that group before
+    ``PullRequest``. ``Square?`` sorts after ``Square``. Comparison is
+    case-insensitive. A shorter path sorts before a longer path that starts
+    with it, so a type stays above its nested types. Equal paths keep source
+    order.
+    """
+    name = extension_extended_type_name(first_code_line(chunk)).replace("`", "")
+    optional = name.endswith("?")
+    if optional:
+        name = name[:-1].rstrip()
+    parts = tuple(part.lower() for part in re.findall(r"\w+", name))
+    if not parts:
+        return ((first_code_line(chunk)[:24].lower(),), 0)
+    return (parts, int(optional))
+
+
+def sort_extension_chunks(chunks: list[str]) -> list[str]:
+    """Group by the extended type's root, then sort each group by path.
+
+    Root groups keep the order those roots first appear, so unrelated
+    extensions are not reshuffled. Within a group the parent stays above its
+    nested types (``Issue`` before ``Issue.Label`` before ``Issue.User``).
+    """
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for chunk in chunks:
+        parts, _optional = extension_type_sort_key(chunk)
+        root = parts[0] if parts else ""
+        if root not in groups:
+            groups[root] = []
+            order.append(root)
+        groups[root].append(chunk)
+    sorted_chunks: list[str] = []
+    for root in order:
+        sorted_chunks.extend(sorted(groups[root], key=extension_type_sort_key))
+    return sorted_chunks
+
+
+def _sort_extension_runs(chunks: list[str]) -> list[str]:
+    """Path-sort each contiguous run of extensions; leave other chunks put."""
+    result: list[str] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        result.extend(sort_extension_chunks(run))
+        run.clear()
+
+    for chunk in chunks:
+        if is_extension_chunk(chunk):
+            run.append(chunk)
+        else:
+            flush()
+            result.append(chunk)
+    flush()
+    return result
+
+
+def preamble_sort_key(chunk: str) -> tuple[tuple[str, ...], int]:
+    """Name path, then ``0`` for a plain type and ``1`` for ``Type?``.
+
+    ``private extension Square?`` sorts after ``private extension Square``.
+    ``private extension Move`` sorts before ``private extension Move.Translation``.
+    """
+    if is_extension_chunk(chunk):
+        return extension_type_sort_key(chunk)
+    return ((preamble_sort_name(chunk),), 0)
+
+
 def sort_preamble_chunks(chunks: list[str]) -> list[str]:
-    return sorted(chunks, key=preamble_sort_name)
+    return sorted(chunks, key=preamble_sort_key)
 
 
 def pure_debug_if_interior(chunk: str) -> str | None:
@@ -1863,6 +1991,7 @@ def reorder_file_layout(text: str, path: Path) -> str:
     preamble: list[str] = []
     mains: list[str] = []
     post: list[str] = []
+    wrapped: list[str] = []
     tail: list[str] = []
 
     type_declarations = [c for c in chunks if is_type_declaration_chunk(c)]
@@ -1877,13 +2006,21 @@ def reorder_file_layout(text: str, path: Path) -> str:
     for chunk in chunks:
         if is_preview_chunk(chunk):
             tail.append(normalize_preview_chunk(chunk))
-        elif is_private_fileprivate_chunk(chunk):
+        elif is_private_fileprivate_chunk(chunk) and not (
+            is_extension_chunk(chunk)
+            and extension_head_references_type(chunk, stem)
+        ):
+            # Private extensions of the file's type, a nested type, or a
+            # collection of either (``[Board.Vector]``) stay with the other
+            # extensions. ``is_extension_chunk`` below places them.
             preamble.append(chunk)
         elif is_type_declaration_chunk(chunk):
             mains.append(chunk)
         elif is_extension_chunk(chunk):
             if not has_main_type_decl and extension_head_references_type(chunk, stem):
                 mains.append(chunk)
+            elif extension_wraps_file_type_in_sugar(chunk, stem):
+                wrapped.append(chunk)
             else:
                 post.append(chunk)
         else:
@@ -1891,7 +2028,11 @@ def reorder_file_layout(text: str, path: Path) -> str:
 
     mains = sort_main_file_chunks(mains, stem)
     ordered = coalesce_adjacent_debug_chunks(
-        sort_preamble_chunks(preamble) + mains + post + tail
+        sort_preamble_chunks(preamble)
+        + mains
+        + sort_extension_chunks(post)
+        + sort_extension_chunks(wrapped)
+        + tail
     )
     new_rest = join_members(ordered)
     if not new_rest:

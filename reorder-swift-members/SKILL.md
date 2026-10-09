@@ -52,9 +52,9 @@ Imports stay first, including isolated ``#if DEBUG`` / ``#endif`` wrappers that 
 
 Per file:
 
-1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by name within this group
+1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by name within this group. An optional form sorts after the plain type (`private extension Square`, then `private extension Square?`). A nested type sorts after its parent (`private extension Move`, then `private extension Move.Castling`), not in source order.
 2. Main type(s) the file is named for (`struct` / `class` / `enum` / `actor` / `protocol`, or in `Extensions/` an `extension` on the filename type when there is no primary declaration)
-3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types)
+3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types). A `private` / `fileprivate` extension whose head names the file’s type stays here too. Extensions that share a root type stay together, and that group is not left in source order: `extension Issue` before `extension Issue.Label` and `extension Issue.User`, then `extension PullRequest` before its nested types. Distinct roots keep the order they first appear. A conformance to the file’s type (`extension Issue: ConversationRecord` in `ConversationRecord.swift`) is that parent extension, not collection sugar. Collection or optional sugar (`private extension [Board.Vector]`, `Board.Vector?`, `Binding where Value == [AppRoute]`) sorts after the file type’s own extensions, so it stays below `extension Board: Collection`. It is not a preamble helper.
 4. `#Preview` blocks last
 
 Import-only `#if` / `#endif` blocks (`#if DEBUG`, `#if canImport`, …) stay in the import preamble. They must not be left behind when a private helper is hoisted, and they must not be ranked as leftover chunks.
@@ -75,7 +75,7 @@ Extensions on shared types (`View`, `String`, models, etc.) belong in an `Extens
 
 **After `body`:**
 
-1. Non-private instance vars/lets — public, then package, then internal. Within each ACL, exposed **stored** properties keep relative declaration order; other vars (e.g. computed) insert by name (`contains…` before `download…`). An internal `pathComponent` stays after all public vars/lets.
+1. Non-private instance vars/lets — public, then package, then internal. A `subscript` sorts before every var/let of the same ACL. Within each ACL, exposed **stored** properties keep relative declaration order; other vars (e.g. computed) insert by name (`contains…` before `download…`). An internal `pathComponent` stays after all public vars/lets.
 2. Private instance vars/lets
 3. Internal instance funcs
 4. `init` (including failable `init?` / `init!`)
