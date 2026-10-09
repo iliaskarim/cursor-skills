@@ -54,7 +54,7 @@ Per file:
 
 1. `private` / `fileprivate` helpers and extensions (types that do not depend on the file’s main type), sorted by name within this group
 2. Main type(s) the file is named for (`struct` / `class` / `enum` / `actor` / `protocol`, or in `Extensions/` an `extension` on the filename type when there is no primary declaration)
-3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types)
+3. Other `extension` blocks (e.g. `extension [AppRoute]` after `enum AppRoute`, `extension View` toolbar helpers after the view types). A `private` / `fileprivate` extension whose head names the file’s type stays here too, including a nested type and collection sugar (`private extension Board.Vector`, `private extension [Board.Vector]` after `struct Board`). It is not a preamble helper.
 4. `#Preview` blocks last
 
 Import-only `#if` / `#endif` blocks (`#if DEBUG`, `#if canImport`, …) stay in the import preamble. They must not be left behind when a private helper is hoisted, and they must not be ranked as leftover chunks.

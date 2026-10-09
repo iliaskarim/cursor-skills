@@ -27,6 +27,10 @@ Enum cases (every enum, including nested):
 
 File layout (per file, after imports):
   private/fileprivate helpers (sorted by name), main type(s), other extensions, previews.
+  A private/fileprivate extension whose head names the file's type stays with
+  the other extensions. That includes a nested type and collection sugar
+  (``private extension [Board.Vector]`` after ``struct Board``). It is not a
+  preamble helper. Unrelated private extensions still sort into the preamble.
   A ``protocol`` is a main type, same as ``struct`` / ``class`` / ``enum`` / ``actor``,
   so conformances stay below the protocol the file is named for.
   Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
@@ -1444,7 +1448,11 @@ def is_private_fileprivate_chunk(text: str) -> bool:
 
 
 def is_extension_chunk(text: str) -> bool:
-    return first_code_line(text).startswith("extension ")
+    """True for ``extension`` and ``private`` / ``fileprivate extension``."""
+    head = first_code_line(text)
+    return bool(
+        re.match(r"^(?:(?:private|fileprivate)\s+)?extension\b", head)
+    )
 
 
 def is_type_declaration_chunk(text: str) -> bool:
@@ -1877,7 +1885,13 @@ def reorder_file_layout(text: str, path: Path) -> str:
     for chunk in chunks:
         if is_preview_chunk(chunk):
             tail.append(normalize_preview_chunk(chunk))
-        elif is_private_fileprivate_chunk(chunk):
+        elif is_private_fileprivate_chunk(chunk) and not (
+            is_extension_chunk(chunk)
+            and extension_head_references_type(chunk, stem)
+        ):
+            # Private extensions of the file's type, a nested type, or a
+            # collection of either (``[Board.Vector]``) stay with the other
+            # extensions. ``is_extension_chunk`` below places them.
             preamble.append(chunk)
         elif is_type_declaration_chunk(chunk):
             mains.append(chunk)

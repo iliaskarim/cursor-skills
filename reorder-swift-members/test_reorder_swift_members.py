@@ -1096,6 +1096,91 @@ enum DebugNetworkDelay {
       self.assertFalse(text.rstrip().endswith("import Foundation\n#endif"))
 
 
+class PrivateExtensionOfNestedTypeTests(unittest.TestCase):
+  def test_array_of_nested_type_stays_after_main_type(self) -> None:
+    """``private extension [Board.Vector]`` is an extension of a nested type.
+
+    The ``[`` sugar is still an extension of ``Array``, but the element type
+    is a subtype of the file's primary type, so the chunk stays after
+    ``Board`` in source order. Unrelated private extensions still sort into
+    the preamble. A second pass is a no-op.
+    """
+    text = """\
+private extension Square {
+  func step() -> Int { 0 }
+}
+
+private extension Piece {
+  func paths() -> [Board.Vector] { [] }
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+
+    let ranks: Int
+  }
+
+  enum Status {
+    case check
+  }
+}
+
+extension Board.Status: CustomStringConvertible {
+  public var description: String { "" }
+}
+
+private extension Board.Vector {
+  var length: Int { files + ranks }
+}
+
+private extension [Board.Vector] {
+  static let cardinalUnitVectors: Self = []
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    piece_at = reordered.index("private extension Piece")
+    square_at = reordered.index("private extension Square")
+    board_at = reordered.index("public struct Board")
+    status_at = reordered.index("extension Board.Status")
+    vector_at = reordered.index("private extension Board.Vector")
+    array_at = reordered.index("private extension [Board.Vector]")
+    self.assertLess(piece_at, square_at)
+    self.assertLess(square_at, board_at)
+    self.assertLess(board_at, status_at)
+    self.assertLess(status_at, vector_at)
+    self.assertLess(vector_at, array_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_fileprivate_array_extension_stays_after_main_type(self) -> None:
+    text = """\
+fileprivate extension Piece {
+  func paths() -> Int { 0 }
+}
+
+struct Board {
+  struct Vector {
+    let files: Int
+  }
+}
+
+fileprivate extension [Board.Vector] {
+  static let diagonalUnitVectors: Self = []
+}
+"""
+    reordered = reorder.reorder_file_layout(text, Path("Board.swift"))
+    self.assertLess(
+        reordered.index("fileprivate extension Piece"),
+        reordered.index("struct Board"),
+    )
+    self.assertLess(
+        reordered.index("struct Board"),
+        reordered.index("fileprivate extension [Board.Vector]"),
+    )
+
+
 class ProtocolBodyReorderTests(unittest.TestCase):
   def test_wrapped_return_type_stays_with_func_body(self) -> None:
     body = """
