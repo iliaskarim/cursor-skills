@@ -30,8 +30,11 @@ File layout (per file, after imports):
   private/fileprivate helpers (sorted by name; ``Type?`` follows ``Type``),
   main type(s), other extensions, previews.
   A private/fileprivate extension whose head names the file's type stays with
-  the other extensions. A nested type (``private extension Board.Vector``)
-  keeps source order among those extensions. Collection or optional sugar
+  the other extensions. Extensions that share a root type stay together, parent
+  before nested types (``extension Issue`` above ``extension Issue.Label`` and
+  ``extension Issue.User``). Distinct roots keep the order they first appear.
+  A conformance (``extension Issue: ConversationRecord``) is not sugar.
+  Collection or optional sugar
   (``private extension [Board.Vector]``, ``Board.Vector?``) sorts after the
   file type's own extensions, so it stays below ``extension Board: Collection``.
   It is not a preamble helper. Unrelated private extensions still sort into
@@ -1708,13 +1711,24 @@ def extension_wraps_file_type_in_sugar(chunk: str, stem: str) -> bool:
     A direct ``Board`` or ``Board.Status`` extension is not sugar. Those stay
     ahead of a collection or optional wrapped around the file type, so
     ``private extension [Board.Vector]`` sorts below ``extension Board: Collection``.
+    A conformance is not sugar: ``extension Issue: ConversationRecord`` extends
+    ``Issue``. A ``where`` clause on some other type
+    (``Binding where Value == [AppRoute]``) is sugar.
     """
-    if not is_extension_chunk(chunk) or not extension_head_references_type(chunk, stem):
+    if not is_extension_chunk(chunk):
         return False
-    name = extension_extended_type_name(first_code_line(chunk))
+    head = first_code_line(chunk).split("{", 1)[0]
+    name = extension_extended_type_name(head).replace("`", "")
     if not name:
         return False
-    return re.fullmatch(rf"{re.escape(stem)}(?:\.\w+)*", name) is None
+    bare = name[:-1].rstrip() if name.endswith("?") else name
+    if re.fullmatch(rf"{re.escape(stem)}(?:\.\w+)*", bare):
+        return bare != name
+    if re.search(rf"\b{re.escape(stem)}\b", name):
+        return True
+    return bool(
+        re.search(r"\bwhere\b", head) and re.search(rf"\b{re.escape(stem)}\b", head)
+    )
 
 
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
@@ -1730,7 +1744,8 @@ def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
 
     indexed = list(enumerate(chunks))
     indexed.sort(key=lambda pair: (rank(pair[1]), pair[0]))
-    return [chunk for _, chunk in indexed]
+    ordered = [chunk for _, chunk in indexed]
+    return _sort_extension_runs(ordered)
 
 
 def preamble_sort_name(chunk: str) -> str:
@@ -1744,23 +1759,75 @@ def preamble_sort_name(chunk: str) -> str:
     return head[:24].lower()
 
 
-def preamble_sort_key(chunk: str) -> tuple[str, int]:
-    """Name, then ``0`` for a plain type and ``1`` for ``Type?``.
+def extension_type_sort_key(chunk: str) -> tuple[tuple[str, ...], int]:
+    """Extended-type path, then ``1`` when that type is optional.
+
+    ``Issue`` sorts before ``Issue.Label``, and that group before
+    ``PullRequest``. ``Square?`` sorts after ``Square``. Comparison is
+    case-insensitive. A shorter path sorts before a longer path that starts
+    with it, so a type stays above its nested types. Equal paths keep source
+    order.
+    """
+    name = extension_extended_type_name(first_code_line(chunk)).replace("`", "")
+    optional = name.endswith("?")
+    if optional:
+        name = name[:-1].rstrip()
+    parts = tuple(part.lower() for part in re.findall(r"\w+", name))
+    if not parts:
+        return ((first_code_line(chunk)[:24].lower(),), 0)
+    return (parts, int(optional))
+
+
+def sort_extension_chunks(chunks: list[str]) -> list[str]:
+    """Group by the extended type's root, then sort each group by path.
+
+    Root groups keep the order those roots first appear, so unrelated
+    extensions are not reshuffled. Within a group the parent stays above its
+    nested types (``Issue`` before ``Issue.Label`` before ``Issue.User``).
+    """
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for chunk in chunks:
+        parts, _optional = extension_type_sort_key(chunk)
+        root = parts[0] if parts else ""
+        if root not in groups:
+            groups[root] = []
+            order.append(root)
+        groups[root].append(chunk)
+    sorted_chunks: list[str] = []
+    for root in order:
+        sorted_chunks.extend(sorted(groups[root], key=extension_type_sort_key))
+    return sorted_chunks
+
+
+def _sort_extension_runs(chunks: list[str]) -> list[str]:
+    """Path-sort each contiguous run of extensions; leave other chunks put."""
+    result: list[str] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        result.extend(sort_extension_chunks(run))
+        run.clear()
+
+    for chunk in chunks:
+        if is_extension_chunk(chunk):
+            run.append(chunk)
+        else:
+            flush()
+            result.append(chunk)
+    flush()
+    return result
+
+
+def preamble_sort_key(chunk: str) -> tuple[tuple[str, ...], int]:
+    """Name path, then ``0`` for a plain type and ``1`` for ``Type?``.
 
     ``private extension Square?`` sorts after ``private extension Square``.
-    Dotted names that share a prefix (``Move`` / ``Move.Castling``) keep
-    source order.
+    ``private extension Move`` sorts before ``private extension Move.Translation``.
     """
-    name = preamble_sort_name(chunk)
-    head = file_private_head(chunk).split("{", 1)[0]
-    optional = bool(
-        re.search(
-            rf"\b(?:extension|struct|class|enum|actor|protocol)\s+{re.escape(name)}\s*\?",
-            head,
-            re.IGNORECASE,
-        )
-    )
-    return (name, int(optional))
+    if is_extension_chunk(chunk):
+        return extension_type_sort_key(chunk)
+    return ((preamble_sort_name(chunk),), 0)
 
 
 def sort_preamble_chunks(chunks: list[str]) -> list[str]:
@@ -1961,7 +2028,11 @@ def reorder_file_layout(text: str, path: Path) -> str:
 
     mains = sort_main_file_chunks(mains, stem)
     ordered = coalesce_adjacent_debug_chunks(
-        sort_preamble_chunks(preamble) + mains + post + wrapped + tail
+        sort_preamble_chunks(preamble)
+        + mains
+        + sort_extension_chunks(post)
+        + sort_extension_chunks(wrapped)
+        + tail
     )
     new_rest = join_members(ordered)
     if not new_rest:

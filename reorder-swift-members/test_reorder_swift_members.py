@@ -1151,7 +1151,8 @@ class PrivateExtensionOfNestedTypeTests(unittest.TestCase):
 
     The ``[`` sugar is still an extension of ``Array``, but the element type
     is a subtype of the file's primary type, so the chunk stays after
-    ``Board`` in source order. Unrelated private extensions still sort into
+    ``Board``. Nested extensions sort by path (``Status`` before ``Vector``)
+    even when ``Vector`` led. Unrelated private extensions still sort into
     the preamble. A second pass is a no-op.
     """
     text = """\
@@ -1175,12 +1176,12 @@ public struct Board {
   }
 }
 
-extension Board.Status: CustomStringConvertible {
-  public var description: String { "" }
-}
-
 private extension Board.Vector {
   var length: Int { files + ranks }
+}
+
+extension Board.Status: CustomStringConvertible {
+  public var description: String { "" }
 }
 
 private extension [Board.Vector] {
@@ -1230,7 +1231,11 @@ fileprivate extension [Board.Vector] {
     )
 
   def test_array_extension_follows_primary_type_extensions(self) -> None:
-    """Sugar stays below ``extension Board: Collection`` even when it led the file."""
+    """Sugar stays below ``Board``'s own extensions.
+
+    ``extension Board`` sorts before ``extension Board.Status`` even when
+    ``Status`` led, and ``[Board.Vector]`` stays last.
+    """
     text = """\
 private extension [Board.Vector] {
   static let cardinalUnitVectors: Self = []
@@ -1244,12 +1249,12 @@ public struct Board {
   }
 }
 
-extension Board: Collection {
-  public var startIndex: Int { 0 }
-}
-
 extension Board.Status: CustomStringConvertible {
   public var description: String { "" }
+}
+
+extension Board: Collection {
+  public var startIndex: Int { 0 }
 }
 """
     path = Path("Board.swift")
@@ -1265,18 +1270,21 @@ extension Board.Status: CustomStringConvertible {
     self.assertEqual(reordered, twice)
 
   def test_optional_extension_follows_plain_type(self) -> None:
-    """``Square?`` sorts after ``Square`` even when it led the file."""
+    """``Square?`` sorts after ``Square``, and ``Move`` before ``Move.Translation``.
+
+    Both hold when the nested extension and the optional led the file.
+    """
     text = """\
-private extension Move {
-  func transforms() -> Int { 0 }
+private extension Move.Translation {
+  func matches() -> Bool { false }
 }
 
 private extension Square? {
   static func + (lhs: Self, rhs: Int) -> Self { lhs }
 }
 
-private extension Move.Translation {
-  func matches() -> Bool { false }
+private extension Move {
+  func transforms() -> Int { 0 }
 }
 
 private extension Piece {
@@ -1306,6 +1314,82 @@ public struct Board {
     self.assertLess(piece_at, square_at)
     self.assertLess(square_at, optional_at)
     self.assertLess(optional_at, board_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_conformances_group_with_nested_types(self) -> None:
+    """``Issue`` stays above ``Issue.Label``, then the ``PullRequest`` group.
+
+    ``ConversationRecord`` in the conformance list is not collection sugar.
+    Path order wins over source order. A second pass is a no-op.
+    """
+    text = """\
+protocol ConversationRecord {
+  associatedtype Label
+}
+
+protocol ConversationRecordLabel {}
+
+protocol ConversationRecordUser {}
+
+extension Issue: ConversationRecord {}
+
+extension PullRequest: ConversationRecord {}
+
+extension Issue.User: ConversationRecordUser {}
+
+extension PullRequest.User: ConversationRecordUser {}
+
+extension Issue.Label: ConversationRecordLabel {}
+
+extension PullRequest.Label: ConversationRecordLabel {}
+"""
+    path = Path("ConversationRecord.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    order = [
+      "protocol ConversationRecord {",
+      "protocol ConversationRecordLabel",
+      "protocol ConversationRecordUser",
+      "extension Issue: ConversationRecord",
+      "extension Issue.Label",
+      "extension Issue.User",
+      "extension PullRequest: ConversationRecord",
+      "extension PullRequest.Label",
+      "extension PullRequest.User",
+    ]
+    positions = [reordered.index(needle) for needle in order]
+    self.assertEqual(positions, sorted(positions))
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_where_clause_sugar_stays_below_primary_extensions(self) -> None:
+    """``Binding where Value == [AppRoute]`` is sugar, not an ``AppRoute`` extension."""
+    text = """\
+enum AppRoute {
+  case root
+}
+
+extension Binding where Value == [AppRoute] {
+  func open() {}
+}
+
+extension AppRoute: Equatable {
+  static func == (lhs: Self, rhs: Self) -> Bool { false }
+}
+
+extension [AppRoute] {
+  func pop() {}
+}
+"""
+    path = Path("AppRoute.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    route_at = reordered.index("enum AppRoute")
+    equatable_at = reordered.index("extension AppRoute: Equatable")
+    array_at = reordered.index("extension [AppRoute]")
+    binding_at = reordered.index("extension Binding")
+    self.assertLess(route_at, equatable_at)
+    self.assertLess(equatable_at, binding_at)
+    self.assertLess(binding_at, array_at)
     twice = reorder.reorder_file_layout(reordered, path)
     self.assertEqual(reordered, twice)
 
