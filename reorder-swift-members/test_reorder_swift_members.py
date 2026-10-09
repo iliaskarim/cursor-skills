@@ -1180,6 +1180,41 @@ fileprivate extension [Board.Vector] {
         reordered.index("fileprivate extension [Board.Vector]"),
     )
 
+  def test_array_extension_follows_primary_type_extensions(self) -> None:
+    """Sugar stays below ``extension Board: Collection`` even when it led the file."""
+    text = """\
+private extension [Board.Vector] {
+  static let cardinalUnitVectors: Self = []
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+
+    let ranks: Int
+  }
+}
+
+extension Board: Collection {
+  public var startIndex: Int { 0 }
+}
+
+extension Board.Status: CustomStringConvertible {
+  public var description: String { "" }
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    board_at = reordered.index("public struct Board")
+    collection_at = reordered.index("extension Board: Collection")
+    status_at = reordered.index("extension Board.Status")
+    array_at = reordered.index("private extension [Board.Vector]")
+    self.assertLess(board_at, collection_at)
+    self.assertLess(collection_at, status_at)
+    self.assertLess(status_at, array_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
 
 class ProtocolBodyReorderTests(unittest.TestCase):
   def test_wrapped_return_type_stays_with_func_body(self) -> None:

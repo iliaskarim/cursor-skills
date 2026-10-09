@@ -28,9 +28,12 @@ Enum cases (every enum, including nested):
 File layout (per file, after imports):
   private/fileprivate helpers (sorted by name), main type(s), other extensions, previews.
   A private/fileprivate extension whose head names the file's type stays with
-  the other extensions. That includes a nested type and collection sugar
-  (``private extension [Board.Vector]`` after ``struct Board``). It is not a
-  preamble helper. Unrelated private extensions still sort into the preamble.
+  the other extensions. A nested type (``private extension Board.Vector``)
+  keeps source order among those extensions. Collection or optional sugar
+  (``private extension [Board.Vector]``, ``Board.Vector?``) sorts after the
+  file type's own extensions, so it stays below ``extension Board: Collection``.
+  It is not a preamble helper. Unrelated private extensions still sort into
+  the preamble.
   A ``protocol`` is a main type, same as ``struct`` / ``class`` / ``enum`` / ``actor``,
   so conformances stay below the protocol the file is named for.
   Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
@@ -1683,6 +1686,21 @@ def extension_head_references_type(chunk: str, type_name: str) -> bool:
     return bool(re.search(rf"\b{re.escape(type_name)}\b", head))
 
 
+def extension_wraps_file_type_in_sugar(chunk: str, stem: str) -> bool:
+    """True for ``[Board.Vector]`` / ``Board.Vector?`` / ``Array<Board>``.
+
+    A direct ``Board`` or ``Board.Status`` extension is not sugar. Those stay
+    ahead of a collection or optional wrapped around the file type, so
+    ``private extension [Board.Vector]`` sorts below ``extension Board: Collection``.
+    """
+    if not is_extension_chunk(chunk) or not extension_head_references_type(chunk, stem):
+        return False
+    name = extension_extended_type_name(first_code_line(chunk))
+    if not name:
+        return False
+    return re.fullmatch(rf"{re.escape(stem)}(?:\.\w+)*", name) is None
+
+
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
     def rank(chunk: str) -> tuple[int, int]:
         if is_type_declaration_chunk(chunk) and re.search(
@@ -1871,6 +1889,7 @@ def reorder_file_layout(text: str, path: Path) -> str:
     preamble: list[str] = []
     mains: list[str] = []
     post: list[str] = []
+    wrapped: list[str] = []
     tail: list[str] = []
 
     type_declarations = [c for c in chunks if is_type_declaration_chunk(c)]
@@ -1898,6 +1917,8 @@ def reorder_file_layout(text: str, path: Path) -> str:
         elif is_extension_chunk(chunk):
             if not has_main_type_decl and extension_head_references_type(chunk, stem):
                 mains.append(chunk)
+            elif extension_wraps_file_type_in_sugar(chunk, stem):
+                wrapped.append(chunk)
             else:
                 post.append(chunk)
         else:
@@ -1905,7 +1926,7 @@ def reorder_file_layout(text: str, path: Path) -> str:
 
     mains = sort_main_file_chunks(mains, stem)
     ordered = coalesce_adjacent_debug_chunks(
-        sort_preamble_chunks(preamble) + mains + post + tail
+        sort_preamble_chunks(preamble) + mains + post + wrapped + tail
     )
     new_rest = join_members(ordered)
     if not new_rest:
