@@ -11,6 +11,7 @@ Optional: pass package root as first argument.
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import subprocess
@@ -73,9 +74,28 @@ def resolve_font() -> Path:
     )
 
 
-def _repo_root() -> Path:
-    if len(sys.argv) > 1:
-        return Path(sys.argv[1]).expanduser().resolve()
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Export Package.swift plus Sources/Tests Swift files, or a commit patch, "
+            "to a text file and PDF."
+        )
+    )
+    parser.add_argument(
+        "package_dir",
+        nargs="?",
+        help="Swift package root. Defaults to the current directory.",
+    )
+    parser.add_argument(
+        "--commit",
+        help="Optional commit-ish whose patch will be exported.",
+    )
+    return parser.parse_args()
+
+
+def _repo_root(package_dir: str | None) -> Path:
+    if package_dir:
+        return Path(package_dir).expanduser().resolve()
     cwd = Path.cwd().resolve()
     if (cwd / "Package.swift").is_file():
         return cwd
@@ -102,6 +122,28 @@ def swift_paths(repo: Path) -> list[Path]:
     for pattern in ("Sources/**/*.swift", "Tests/**/*.swift"):
         out.extend(repo.glob(pattern))
     return sorted(out, key=lambda p: p.as_posix())
+
+
+def git_output(repo: Path, args: list[str]) -> str:
+    return subprocess.check_output(["git", *args], cwd=repo, text=True)
+
+
+def resolve_commit(repo: Path, commitish: str) -> str:
+    return git_output(repo, ["rev-parse", "--verify", f"{commitish}^{{commit}}"]).strip()
+
+
+def short_commit(repo: Path, commit: str) -> str:
+    return git_output(repo, ["rev-parse", "--short", commit]).strip()
+
+
+def build_commit_patch_text(repo: Path, title: str, commit: str) -> str:
+    short = short_commit(repo, commit)
+    lines: list[str] = []
+    lines.append(f"{title} — commit patch {short}")
+    lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    lines.append("")
+    patch = git_output(repo, ["show", "--format=fuller", "--stat", "--patch", commit])
+    return "\n".join(lines) + "\n" + patch
 
 
 def build_combined_text(repo: Path, title: str) -> str:
@@ -163,7 +205,7 @@ def write_pdf(text: str, font_path: Path, out_pdf: Path) -> None:
     sections = text.split("\f")
     first = True
     for section in sections:
-        chunk = section.strip("\n")
+        chunk = section.strip("\n").expandtabs(4)
         if not chunk:
             continue
         if first:
@@ -186,21 +228,29 @@ def write_pdf(text: str, font_path: Path, out_pdf: Path) -> None:
 
 
 def main() -> int:
-    repo = _repo_root()
+    args = _parse_args()
+    repo = _repo_root(args.package_dir)
     slug = _package_title_slug(repo)
     font_path = resolve_font()
 
-    paths = swift_paths(repo)
-    pkg_swift = repo / "Package.swift"
-    has_any = pkg_swift.is_file() or bool(paths)
-    if not has_any:
-        print("No Package.swift or Swift sources under Sources/ Tests/.", file=sys.stderr)
-        return 1
+    if args.commit:
+        commit = resolve_commit(repo, args.commit)
+        stem = f"{slug}-commit-{short_commit(repo, commit)}-patch"
+        combined = build_commit_patch_text(repo, slug, commit)
+    else:
+        paths = swift_paths(repo)
+        pkg_swift = repo / "Package.swift"
+        has_any = pkg_swift.is_file() or bool(paths)
+        if not has_any:
+            print("No Package.swift or Swift sources under Sources/ Tests/.", file=sys.stderr)
+            return 1
 
-    out_txt = repo / f"{slug}-all-sources.txt"
-    out_pdf = repo / f"{slug}-all-sources.pdf"
+        stem = f"{slug}-all-sources"
+        combined = build_combined_text(repo, slug)
 
-    combined = build_combined_text(repo, slug)
+    out_txt = repo / f"{stem}.txt"
+    out_pdf = repo / f"{stem}.pdf"
+
     out_txt.write_text(combined, encoding="utf-8")
     write_pdf(combined, font_path, out_pdf)
 

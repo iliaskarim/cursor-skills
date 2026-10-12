@@ -11,6 +11,11 @@ Generate a combined code listing (`{PackageName}` is `name:` in root `Package.sw
 - `{PackageName}-all-sources.txt`
 - `{PackageName}-all-sources.pdf`
 
+Or generate a commit patch export:
+
+- `{PackageName}-commit-{short-hash}-patch.txt`
+- `{PackageName}-commit-{short-hash}-patch.pdf`
+
 Use SF Mono Bold, preserve whitespace, insert page breaks between files, and add bottom-left page numbers.
 
 ## Default Workflow
@@ -28,7 +33,21 @@ Optional: pass the package directory if you are not already in it:
 python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/YourPackage
 ```
 
-3. Confirm the log shows both `{PackageName}-all-sources.{txt,pdf}` were written in that directory.
+Optional: export a commit patch instead of the full source listing:
+
+```bash
+python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py --commit <commit-ish>
+```
+
+When exporting a package outside the current directory:
+
+```bash
+python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/YourPackage --commit <commit-ish>
+```
+
+3. Confirm the log shows both output files were written in that directory.
+   Source listings are named `{PackageName}-all-sources.{txt,pdf}`;
+   commit patches are named `{PackageName}-commit-{short-hash}-patch.{txt,pdf}`.
 
 ## Formatting Rules
 
