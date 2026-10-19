@@ -1,6 +1,6 @@
 ---
 name: build-source-pdf
-description: Build a single PDF from repository source files and tests, from one commit's patch, or from the commits unique to each of two diverging branches such as develop and master. Uses stable monospace formatting, page breaks between sections, and page numbers in the bottom-left corner. Use when the user asks to export/print source code to PDF, include tests, regenerate a code listing PDF, export a commit or a branch divergence, or adjust code-PDF typography/layout.
+description: Build a single PDF from repository source files and tests, from one commit's patch, or from the combined diff of two branches such as develop and master. Uses stable monospace formatting, page breaks between sections, and page numbers in the bottom-left corner. Use when the user asks to export/print source code to PDF, include tests, regenerate a code listing PDF, export a commit or a branch divergence, or adjust code-PDF typography/layout.
 ---
 # Build Source PDF
 
@@ -16,7 +16,7 @@ Or generate a commit patch export:
 - `{PackageName}-commit-{short-hash}-patch.txt`
 - `{PackageName}-commit-{short-hash}-patch.pdf`
 
-Or generate the divergence of two branches (commits reachable from only one side):
+Or generate one combined diff per side of two branches (every commit on that side, together):
 
 - `{PackageName}-{left}-{left-short}-vs-{right}-{right-short}-patch.txt`
 - `{PackageName}-{left}-{left-short}-vs-{right}-{right-short}-patch.pdf`
@@ -50,7 +50,7 @@ When exporting a package outside the current directory:
 python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/YourPackage --commit <commit-ish>
 ```
 
-Optional: export two branches that diverge. The first name is the left side and the second is the right side, matching `git log left...right`:
+Optional: export two branches that diverge. The first name is the left side and the second is the right side:
 
 ```bash
 python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py --branches develop master
@@ -62,11 +62,11 @@ When the package is outside the current directory:
 python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/YourPackage --branches develop master
 ```
 
-Pass `--commit` or `--branches`, and only one of them. The branch export still works when one tip contains the other. Each side is the commits reachable from that tip and not from the other (`right..left`, then `left..right`), with `git log --format=fuller --stat --patch`. The text has three form-feed sections, so each starts on its own page:
+Pass `--commit` or `--branches`, and only one of them. The branch export still works when one tip contains the other. Each side that has commits is one `git diff --stat --patch` from the merge-base to that tip, so those commits appear as a single diff. A side with no commits is omitted. Unrelated histories use `git diff` between the two tips. Form feed separates the cover from each diff, so each starts on its own page:
 
-- Cover: both tips, the merge-base (or unrelated histories), commit counts, and `git diff --stat` from the merge-base to each tip.
-- Commits on the first branch and not the second.
-- Commits on the second branch and not the first.
+- Cover: both tips, the merge-base (or unrelated histories), and the commit counts.
+- Combined diff of the first branch since the merge-base, when that branch has commits.
+- Combined diff of the second branch since the merge-base, when that branch has commits.
 
 Branch names in the filename keep letters, digits, `.`, `_`, and `-`. Any other character, including `/`, becomes `-`.
 
@@ -83,7 +83,7 @@ Branch names in the filename keep letters, digits, `.`, `_`, and `-`. Any other 
   - Use left alignment (`Align.L`)
   - Use character wrapping (`WrapMode.CHAR`) for long code tokens
 - Keep one file per section and separate sections with form feed (`\f`) so each file starts on a new page.
-- A branch divergence uses the same form feed between its cover and each side's commit log. Commits within a side stay in one section.
+- A branch divergence uses the same form feed between its cover and each side's combined diff.
 
 ## What To Edit For User Requests
 

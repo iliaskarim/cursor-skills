@@ -80,7 +80,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Export Package.swift plus Sources/Tests Swift files, a commit patch, "
-            "or the commits unique to each of two branches, to a text file and PDF."
+            "or one combined diff per side of two branches, to a text file and PDF."
         )
     )
     parser.add_argument(
@@ -99,7 +99,7 @@ def _parse_args() -> argparse.Namespace:
         metavar=("LEFT", "RIGHT"),
         help=(
             "Two branches, for example develop and master. "
-            "Export the commits reachable from only one of them."
+            "Export one combined diff for the commits on each side."
         ),
     )
     return parser.parse_args()
@@ -180,6 +180,10 @@ def _ruled_section(title: str, body: str) -> str:
     return "\n".join(["=" * FILE_RULE_LEN, title, "=" * FILE_RULE_LEN, "", text, ""])
 
 
+def _combined_diff(repo: Path, base: str, tip: str) -> str:
+    return git_output(repo, ["diff", "--stat", "--patch", f"{base}..{tip}"])
+
+
 def build_branch_divergence_text(
     repo: Path,
     title: str,
@@ -201,30 +205,29 @@ def build_branch_divergence_text(
         f"{left_only} commits on {left} not in {right}",
         f"{right_only} commits on {right} not in {left}",
     ]
-    if base:
-        left_stat = git_output(repo, ["diff", "--stat", f"{base}..{left_commit}"]).strip()
-        right_stat = git_output(repo, ["diff", "--stat", f"{base}..{right_commit}"]).strip()
-        cover += [
-            "",
-            f"tree changes on {left} since merge-base:",
-            left_stat or "(none)",
-            "",
-            f"tree changes on {right} since merge-base:",
-            right_stat or "(none)",
-        ]
-    left_log = git_output(
-        repo,
-        ["log", "--format=fuller", "--stat", "--patch", f"{right_commit}..{left_commit}"],
-    )
-    right_log = git_output(
-        repo,
-        ["log", "--format=fuller", "--stat", "--patch", f"{left_commit}..{right_commit}"],
-    )
-    sections = [
-        "\n".join(cover),
-        _ruled_section(f"COMMITS: {left} not in {right} ({left_only})", left_log),
-        _ruled_section(f"COMMITS: {right} not in {left} ({right_only})", right_log),
-    ]
+    sections = ["\n".join(cover)]
+    if base is None:
+        diff = git_output(
+            repo, ["diff", "--stat", "--patch", left_commit, right_commit]
+        )
+        sections.append(_ruled_section(f"DIFF: {left}..{right}", diff))
+    else:
+        if left_only:
+            sections.append(
+                _ruled_section(
+                    f"DIFF: {left} since merge-base ({left_only} commits)",
+                    _combined_diff(repo, base, left_commit),
+                )
+            )
+        if right_only:
+            sections.append(
+                _ruled_section(
+                    f"DIFF: {right} since merge-base ({right_only} commits)",
+                    _combined_diff(repo, base, right_commit),
+                )
+            )
+        if not left_only and not right_only:
+            sections.append(_ruled_section(f"DIFF: {left}...{right}", ""))
     return "\f".join(sections) + "\n"
 
 
