@@ -1531,9 +1531,21 @@ extension Piece {
     twice = reorder.reorder_file_layout(reordered, path)
     self.assertEqual(reordered, twice)
 
-  def test_sibling_types_stay_after_a_filename_extension(self) -> None:
-    """No hoist when the file does not declare the filename type."""
+  def test_sibling_types_sit_above_a_filename_extension(self) -> None:
+    """Same hoist when the file extends the filename type and does not declare it.
+
+    Nested extensions of that type stay with it, below the sibling types.
+    A second pass is a no-op.
+    """
     text = """\
+extension Board.Vector {
+  var length: Int { 0 }
+}
+
+private struct Hidden {
+  let flag: Bool
+}
+
 extension Board {
   func step() -> Int { 0 }
 }
@@ -1545,14 +1557,24 @@ struct Piece {
 public enum Rank {
   case one
 }
+
+extension Piece {
+  func paths() -> Int { 0 }
+}
 """
-    reordered = reorder.reorder_file_layout(text, Path("Board.swift"))
-    board_at = reordered.index("extension Board")
-    piece_at = reordered.index("struct Piece")
-    rank_at = reordered.index("public enum Rank")
-    self.assertLess(board_at, piece_at)
-    self.assertLess(piece_at, rank_at)
-    twice = reorder.reorder_file_layout(reordered, Path("Board.swift"))
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    order = [
+      "private struct Hidden",
+      "struct Piece",
+      "public enum Rank",
+      "extension Board {",
+      "extension Board.Vector",
+      "extension Piece",
+    ]
+    positions = [reordered.index(needle) for needle in order]
+    self.assertEqual(positions, sorted(positions))
+    twice = reorder.reorder_file_layout(reordered, path)
     self.assertEqual(reordered, twice)
 
 
