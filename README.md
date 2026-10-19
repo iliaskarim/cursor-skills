@@ -27,7 +27,7 @@ Once linked, a skill is available in any project. Scripts live next to `SKILL.md
 
 ### [build-source-pdf](build-source-pdf/SKILL.md)
 
-Build one PDF of a Swift package’s sources and tests, of one commit’s patch, or of the combined diff of two diverging branches such as `develop` and `master`. Dotfiles and paths under dot directories are omitted. SF Mono Bold, a page break between sections, page numbers in the bottom-left corner. The exporter is `export_sources_pdf.py` in this directory.
+Build one PDF of a Swift package’s files, of one commit’s patch, or of the combined diff of two diverging branches such as `develop` and `master`. `--files` selects `sources`, `tests`, or `all` (sources, tests, Justfile, README, scripts, and other text files). Dotfiles and paths under dot directories are omitted. SF Mono Bold, a page break between sections, page numbers in the bottom-left corner. The exporter is `export_sources_pdf.py` in this directory.
 
 ### [reorder-swift-members](reorder-swift-members/SKILL.md)
 

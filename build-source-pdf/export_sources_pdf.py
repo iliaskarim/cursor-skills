@@ -5,10 +5,13 @@ Build a source listing, a commit patch, or a two-branch divergence PDF.
 Run from Swift package root (directory with Package.swift):
 
     python3 path/to/export_sources_pdf.py
-    python3 path/to/export_sources_pdf.py --commit <commit-ish>
-    python3 path/to/export_sources_pdf.py --branches develop master
+    python3 path/to/export_sources_pdf.py --files sources
+    python3 path/to/export_sources_pdf.py --commit <commit-ish> --files tests
+    python3 path/to/export_sources_pdf.py --branches develop master --files all
 
 Optional: pass package root as the first argument.
+`--files` is `sources` (Sources/), `tests` (Tests/), or `all`
+(every text file except dotfiles: Sources, Tests, Justfile, README, scripts).
 """
 
 from __future__ import annotations
@@ -79,8 +82,8 @@ def resolve_font() -> Path:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Export Package.swift plus Sources/Tests Swift files, a commit patch, "
-            "or one combined diff per side of two branches, to a text file and PDF."
+            "Export a source listing, a commit patch, or one combined diff per side "
+            "of two branches, to a text file and PDF."
         )
     )
     parser.add_argument(
@@ -100,6 +103,16 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Two branches, for example develop and master. "
             "Export one combined diff for the commits on each side."
+        ),
+    )
+    parser.add_argument(
+        "--files",
+        choices=("sources", "tests", "all"),
+        default="all",
+        help=(
+            "sources is Sources/. tests is Tests/. "
+            "all is every text file except dotfiles, including Justfile, README, and scripts. "
+            "Default: all."
         ),
     )
     return parser.parse_args()
@@ -129,10 +142,10 @@ def _package_title_slug(repo: Path) -> str:
     return m.group(1) if m else repo.name
 
 
+_SCOPE_TITLE = {"sources": "Sources", "tests": "Tests", "all": "all files"}
+
 # Drop dotfiles and anything under a dot directory (.github, .gitignore, .vscode, …).
-_DOTPATH_EXCLUDE = [
-    "--",
-    ".",
+_DOT_EXCLUDES = [
     ":(exclude,glob).*",
     ":(exclude,glob).*/**",
     ":(exclude,glob)**/.*",
@@ -144,12 +157,51 @@ def _is_dot_path(path: Path) -> bool:
     return any(part.startswith(".") for part in path.parts)
 
 
-def swift_paths(repo: Path) -> list[Path]:
-    out: list[Path] = []
-    for pattern in ("Sources/**/*.swift", "Tests/**/*.swift"):
-        out.extend(repo.glob(pattern))
-    visible = [path for path in out if not _is_dot_path(path.relative_to(repo))]
-    return sorted(visible, key=lambda p: p.as_posix())
+def _scope_slug(files: str) -> str:
+    return "all-files" if files == "all" else files
+
+
+def _in_scope(relative: Path, files: str) -> bool:
+    if _is_dot_path(relative) or not relative.parts:
+        return False
+    if files == "sources":
+        return relative.parts[0] == "Sources"
+    if files == "tests":
+        return relative.parts[0] == "Tests"
+    return True
+
+
+def _pathspec(files: str) -> list[str]:
+    roots = {"sources": ["Sources"], "tests": ["Tests"], "all": ["."]}[files]
+    return ["--", *roots, *_DOT_EXCLUDES]
+
+
+def _read_text(path: Path) -> str | None:
+    data = path.read_bytes()
+    if b"\0" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def listed_files(repo: Path, files: str) -> list[tuple[Path, str]]:
+    found: list[tuple[Path, str]] = []
+    for name in git_output(repo, ["ls-files", "-z"]).split("\0"):
+        if not name:
+            continue
+        relative = Path(name)
+        if not _in_scope(relative, files):
+            continue
+        path = repo / relative
+        if not path.is_file():
+            continue
+        text = _read_text(path)
+        if text is None:
+            continue
+        found.append((path, text))
+    return sorted(found, key=lambda item: item[0].as_posix())
 
 
 def git_output(repo: Path, args: list[str]) -> str:
@@ -196,8 +248,10 @@ def _ruled_section(title: str, body: str) -> str:
     return "\n".join(["=" * FILE_RULE_LEN, title, "=" * FILE_RULE_LEN, "", text, ""])
 
 
-def _combined_diff(repo: Path, base: str, tip: str) -> str:
-    return git_output(repo, ["diff", "--stat", "--patch", f"{base}..{tip}", *_DOTPATH_EXCLUDE])
+def _combined_diff(repo: Path, base: str, tip: str, files: str) -> str:
+    return git_output(
+        repo, ["diff", "--stat", "--patch", f"{base}..{tip}", *_pathspec(files)]
+    )
 
 
 def build_branch_divergence_text(
@@ -207,6 +261,7 @@ def build_branch_divergence_text(
     left_commit: str,
     right: str,
     right_commit: str,
+    files: str,
 ) -> str:
     base = _merge_base(repo, left_commit, right_commit)
     left_only, right_only = _commit_counts(repo, left_commit, right_commit)
@@ -220,12 +275,13 @@ def build_branch_divergence_text(
         "",
         f"{left_only} commits on {left} not in {right}",
         f"{right_only} commits on {right} not in {left}",
+        f"files: {_SCOPE_TITLE[files]}",
     ]
     sections = ["\n".join(cover)]
     if base is None:
         diff = git_output(
             repo,
-            ["diff", "--stat", "--patch", left_commit, right_commit, *_DOTPATH_EXCLUDE],
+            ["diff", "--stat", "--patch", left_commit, right_commit, *_pathspec(files)],
         )
         sections.append(_ruled_section(f"DIFF: {left}..{right}", diff))
     else:
@@ -233,14 +289,14 @@ def build_branch_divergence_text(
             sections.append(
                 _ruled_section(
                     f"DIFF: {left} since merge-base ({left_only} commits)",
-                    _combined_diff(repo, base, left_commit),
+                    _combined_diff(repo, base, left_commit, files),
                 )
             )
         if right_only:
             sections.append(
                 _ruled_section(
                     f"DIFF: {right} since merge-base ({right_only} commits)",
-                    _combined_diff(repo, base, right_commit),
+                    _combined_diff(repo, base, right_commit, files),
                 )
             )
         if not left_only and not right_only:
@@ -256,46 +312,35 @@ def short_commit(repo: Path, commit: str) -> str:
     return git_output(repo, ["rev-parse", "--short", commit]).strip()
 
 
-def build_commit_patch_text(repo: Path, title: str, commit: str) -> str:
+def build_commit_patch_text(repo: Path, title: str, commit: str, files: str) -> str:
     short = short_commit(repo, commit)
     lines: list[str] = []
     lines.append(f"{title} — commit patch {short}")
     lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    lines.append(f"files: {_SCOPE_TITLE[files]}")
     lines.append("")
     patch = git_output(
         repo,
-        ["show", "--format=fuller", "--stat", "--patch", commit, *_DOTPATH_EXCLUDE],
+        ["show", "--format=fuller", "--stat", "--patch", commit, *_pathspec(files)],
     )
     return "\n".join(lines) + "\n" + patch
 
 
-def build_combined_text(repo: Path, title: str) -> str:
+def build_combined_text(repo: Path, title: str, files: str) -> str:
     lines: list[str] = []
-    lines.append(f"{title} — full source listing (Package + Sources + Tests)")
+    lines.append(f"{title} — {_SCOPE_TITLE[files]}")
     lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
     lines.append("")
 
     parts: list[str] = []
-    pkg = repo / "Package.swift"
-    if pkg.is_file():
+    for path, text in listed_files(repo, files):
         block = [
             "",
             "=" * FILE_RULE_LEN,
-            f"FILE: {pkg.relative_to(repo)}",
+            f"FILE: {path.relative_to(repo)}",
             "=" * FILE_RULE_LEN,
             "",
-            pkg.read_text(encoding="utf-8"),
-        ]
-        parts.append("\n".join(block))
-
-    for sp in swift_paths(repo):
-        block = [
-            "",
-            "=" * FILE_RULE_LEN,
-            f"FILE: {sp.relative_to(repo)}",
-            "=" * FILE_RULE_LEN,
-            "",
-            sp.read_text(encoding="utf-8"),
+            text,
         ]
         parts.append("\n".join(block))
 
@@ -356,31 +401,28 @@ def main() -> int:
     slug = _package_title_slug(repo)
     font_path = resolve_font()
 
+    scope = _scope_slug(args.files)
     if args.commit:
         commit = resolve_commit(repo, args.commit)
-        stem = f"{slug}-commit-{short_commit(repo, commit)}-patch"
-        combined = build_commit_patch_text(repo, slug, commit)
+        stem = f"{slug}-commit-{short_commit(repo, commit)}-{scope}-patch"
+        combined = build_commit_patch_text(repo, slug, commit, args.files)
     elif args.branches:
         left, right = args.branches
         left_commit = resolve_commit(repo, left)
         right_commit = resolve_commit(repo, right)
         stem = (
             f"{slug}-{ref_filename_part(left)}-{short_commit(repo, left_commit)}"
-            f"-vs-{ref_filename_part(right)}-{short_commit(repo, right_commit)}-patch"
+            f"-vs-{ref_filename_part(right)}-{short_commit(repo, right_commit)}-{scope}-patch"
         )
         combined = build_branch_divergence_text(
-            repo, slug, left, left_commit, right, right_commit
+            repo, slug, left, left_commit, right, right_commit, args.files
         )
     else:
-        paths = swift_paths(repo)
-        pkg_swift = repo / "Package.swift"
-        has_any = pkg_swift.is_file() or bool(paths)
-        if not has_any:
-            print("No Package.swift or Swift sources under Sources/ Tests/.", file=sys.stderr)
+        if not listed_files(repo, args.files):
+            print(f"No files for --files {args.files}.", file=sys.stderr)
             return 1
-
-        stem = f"{slug}-all-sources"
-        combined = build_combined_text(repo, slug)
+        stem = f"{slug}-{scope}"
+        combined = build_combined_text(repo, slug, args.files)
 
     out_txt = repo / f"{stem}.txt"
     out_pdf = repo / f"{stem}.pdf"
