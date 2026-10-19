@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Build {PackageName}-all-sources.txt and {PackageName}-all-sources.pdf using SF Mono Bold.
+Build a source listing, a commit patch, or a two-branch divergence PDF.
 
 Run from Swift package root (directory with Package.swift):
 
     python3 path/to/export_sources_pdf.py
+    python3 path/to/export_sources_pdf.py --commit <commit-ish>
+    python3 path/to/export_sources_pdf.py --branches develop master
 
-Optional: pass package root as first argument.
+Optional: pass package root as the first argument.
 """
 
 from __future__ import annotations
@@ -77,8 +79,8 @@ def resolve_font() -> Path:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Export Package.swift plus Sources/Tests Swift files, or a commit patch, "
-            "to a text file and PDF."
+            "Export Package.swift plus Sources/Tests Swift files, a commit patch, "
+            "or the commits unique to each of two branches, to a text file and PDF."
         )
     )
     parser.add_argument(
@@ -86,9 +88,19 @@ def _parse_args() -> argparse.Namespace:
         nargs="?",
         help="Swift package root. Defaults to the current directory.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--commit",
-        help="Optional commit-ish whose patch will be exported.",
+        help="Commit-ish whose patch will be exported.",
+    )
+    mode.add_argument(
+        "--branches",
+        nargs=2,
+        metavar=("LEFT", "RIGHT"),
+        help=(
+            "Two branches, for example develop and master. "
+            "Export the commits reachable from only one of them."
+        ),
     )
     return parser.parse_args()
 
@@ -125,7 +137,95 @@ def swift_paths(repo: Path) -> list[Path]:
 
 
 def git_output(repo: Path, args: list[str]) -> str:
-    return subprocess.check_output(["git", *args], cwd=repo, text=True)
+    result = subprocess.run(
+        ["git", "--no-pager", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise SystemExit(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout
+
+
+def ref_filename_part(ref: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", ref.strip()).strip("-")
+    return cleaned or "ref"
+
+
+def _merge_base(repo: Path, left: str, right: str) -> str | None:
+    result = subprocess.run(
+        ["git", "--no-pager", "merge-base", left, right],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode == 1 and not result.stderr.strip():
+        return None
+    detail = (result.stderr or result.stdout).strip()
+    raise SystemExit(f"git merge-base failed: {detail}")
+
+
+def _commit_counts(repo: Path, left: str, right: str) -> tuple[int, int]:
+    raw = git_output(repo, ["rev-list", "--left-right", "--count", f"{left}...{right}"])
+    left_count, right_count = raw.split()
+    return int(left_count), int(right_count)
+
+
+def _ruled_section(title: str, body: str) -> str:
+    text = body.strip("\n") or "(none)"
+    return "\n".join(["=" * FILE_RULE_LEN, title, "=" * FILE_RULE_LEN, "", text, ""])
+
+
+def build_branch_divergence_text(
+    repo: Path,
+    title: str,
+    left: str,
+    left_commit: str,
+    right: str,
+    right_commit: str,
+) -> str:
+    base = _merge_base(repo, left_commit, right_commit)
+    left_only, right_only = _commit_counts(repo, left_commit, right_commit)
+    cover = [
+        f"{title} — {left}...{right}",
+        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        "",
+        f"{left}: {left_commit}",
+        f"{right}: {right_commit}",
+        f"merge-base: {base or '(unrelated histories)'}",
+        "",
+        f"{left_only} commits on {left} not in {right}",
+        f"{right_only} commits on {right} not in {left}",
+    ]
+    if base:
+        left_stat = git_output(repo, ["diff", "--stat", f"{base}..{left_commit}"]).strip()
+        right_stat = git_output(repo, ["diff", "--stat", f"{base}..{right_commit}"]).strip()
+        cover += [
+            "",
+            f"tree changes on {left} since merge-base:",
+            left_stat or "(none)",
+            "",
+            f"tree changes on {right} since merge-base:",
+            right_stat or "(none)",
+        ]
+    left_log = git_output(
+        repo,
+        ["log", "--format=fuller", "--stat", "--patch", f"{right_commit}..{left_commit}"],
+    )
+    right_log = git_output(
+        repo,
+        ["log", "--format=fuller", "--stat", "--patch", f"{left_commit}..{right_commit}"],
+    )
+    sections = [
+        "\n".join(cover),
+        _ruled_section(f"COMMITS: {left} not in {right} ({left_only})", left_log),
+        _ruled_section(f"COMMITS: {right} not in {left} ({right_only})", right_log),
+    ]
+    return "\f".join(sections) + "\n"
 
 
 def resolve_commit(repo: Path, commitish: str) -> str:
@@ -237,6 +337,17 @@ def main() -> int:
         commit = resolve_commit(repo, args.commit)
         stem = f"{slug}-commit-{short_commit(repo, commit)}-patch"
         combined = build_commit_patch_text(repo, slug, commit)
+    elif args.branches:
+        left, right = args.branches
+        left_commit = resolve_commit(repo, left)
+        right_commit = resolve_commit(repo, right)
+        stem = (
+            f"{slug}-{ref_filename_part(left)}-{short_commit(repo, left_commit)}"
+            f"-vs-{ref_filename_part(right)}-{short_commit(repo, right_commit)}-patch"
+        )
+        combined = build_branch_divergence_text(
+            repo, slug, left, left_commit, right, right_commit
+        )
     else:
         paths = swift_paths(repo)
         pkg_swift = repo / "Package.swift"

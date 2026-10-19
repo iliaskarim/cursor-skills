@@ -27,7 +27,7 @@ Once linked, a skill is available in any project. Scripts live next to `SKILL.md
 
 ### [build-source-pdf](build-source-pdf/SKILL.md)
 
-Build one PDF of a Swift package’s sources and tests: SF Mono Bold, a page break between files, page numbers in the bottom-left corner. The exporter is `export_sources_pdf.py` in this directory.
+Build one PDF of a Swift package’s sources and tests, of one commit’s patch, or of the commits unique to each of two diverging branches such as `develop` and `master`. SF Mono Bold, a page break between sections, page numbers in the bottom-left corner. The exporter is `export_sources_pdf.py` in this directory.
 
 ### [reorder-swift-members](reorder-swift-members/SKILL.md)
 

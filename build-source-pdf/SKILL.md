@@ -1,6 +1,6 @@
 ---
 name: build-source-pdf
-description: Build a single PDF from repository source files and tests with stable monospace formatting, page breaks between files, and page numbers in the bottom-left corner. Use when the user asks to export/print source code to PDF, include tests, regenerate a code listing PDF, or adjust code-PDF typography/layout.
+description: Build a single PDF from repository source files and tests, from one commit's patch, or from the commits unique to each of two diverging branches such as develop and master. Uses stable monospace formatting, page breaks between sections, and page numbers in the bottom-left corner. Use when the user asks to export/print source code to PDF, include tests, regenerate a code listing PDF, export a commit or a branch divergence, or adjust code-PDF typography/layout.
 ---
 # Build Source PDF
 
@@ -16,7 +16,12 @@ Or generate a commit patch export:
 - `{PackageName}-commit-{short-hash}-patch.txt`
 - `{PackageName}-commit-{short-hash}-patch.pdf`
 
-Use SF Mono Bold, preserve whitespace, insert page breaks between files, and add bottom-left page numbers.
+Or generate the divergence of two branches (commits reachable from only one side):
+
+- `{PackageName}-{left}-{left-short}-vs-{right}-{right-short}-patch.txt`
+- `{PackageName}-{left}-{left-short}-vs-{right}-{right-short}-patch.pdf`
+
+Use SF Mono Bold, preserve whitespace, insert page breaks between sections, and add bottom-left page numbers.
 
 ## Default Workflow
 
@@ -45,9 +50,30 @@ When exporting a package outside the current directory:
 python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/YourPackage --commit <commit-ish>
 ```
 
+Optional: export two branches that diverge. The first name is the left side and the second is the right side, matching `git log left...right`:
+
+```bash
+python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py --branches develop master
+```
+
+When the package is outside the current directory:
+
+```bash
+python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/YourPackage --branches develop master
+```
+
+Pass `--commit` or `--branches`, and only one of them. The branch export still works when one tip contains the other. Each side is the commits reachable from that tip and not from the other (`right..left`, then `left..right`), with `git log --format=fuller --stat --patch`. The text has three form-feed sections, so each starts on its own page:
+
+- Cover: both tips, the merge-base (or unrelated histories), commit counts, and `git diff --stat` from the merge-base to each tip.
+- Commits on the first branch and not the second.
+- Commits on the second branch and not the first.
+
+Branch names in the filename keep letters, digits, `.`, `_`, and `-`. Any other character, including `/`, becomes `-`.
+
 3. Confirm the log shows both output files were written in that directory.
    Source listings are named `{PackageName}-all-sources.{txt,pdf}`;
-   commit patches are named `{PackageName}-commit-{short-hash}-patch.{txt,pdf}`.
+   commit patches are named `{PackageName}-commit-{short-hash}-patch.{txt,pdf}`;
+   branch divergences are named `{PackageName}-{left}-{left-short}-vs-{right}-{right-short}-patch.{txt,pdf}`.
 
 ## Formatting Rules
 
@@ -57,6 +83,7 @@ python3 ~/.cursor/skills-cursor/build-source-pdf/export_sources_pdf.py /path/to/
   - Use left alignment (`Align.L`)
   - Use character wrapping (`WrapMode.CHAR`) for long code tokens
 - Keep one file per section and separate sections with form feed (`\f`) so each file starts on a new page.
+- A branch divergence uses the same form feed between its cover and each side's commit log. Commits within a side stay in one section.
 
 ## What To Edit For User Requests
 
