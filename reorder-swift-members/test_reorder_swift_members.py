@@ -571,6 +571,33 @@ class ProcessFileTests(unittest.TestCase):
       self.assertEqual(text.count("{"), VIEWBUILDER_IF_ELSE.count("{"))
       self.assertEqual(text.count("}"), VIEWBUILDER_IF_ELSE.count("}"))
 
+  def test_generic_typealiases_each_get_a_blank_line(self) -> None:
+    original = """\
+import Foundation
+
+public actor APIClient {
+}
+
+public typealias VoidBodyEndpoint = Endpoint<Void, Void>
+public typealias VoidRequestBodyEndpoint<ResponseBody> = Endpoint<Void, ResponseBody>
+public typealias VoidResponseBodyEndpoint<RequestBody> = Endpoint<RequestBody, Void>
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+      path = Path(tmp) / "APIClient.swift"
+      path.write_text(original)
+      reorder.process_file(path, include_views=True, include_non_views=True)
+      text = path.read_text()
+    self.assertIn(
+      "public typealias VoidBodyEndpoint = Endpoint<Void, Void>\n"
+      "\n"
+      "public typealias VoidRequestBodyEndpoint<ResponseBody> = "
+      "Endpoint<Void, ResponseBody>\n"
+      "\n"
+      "public typealias VoidResponseBodyEndpoint<RequestBody> = "
+      "Endpoint<RequestBody, Void>\n",
+      text,
+    )
+
 
 class EnumCaseLayoutTests(unittest.TestCase):
   def test_simple_cases_share_one_line(self) -> None:

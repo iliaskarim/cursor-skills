@@ -378,7 +378,7 @@ INIT_DECL_RE = re.compile(
 TYPE_MEMBER_LINE_RE = re.compile(
     r"^(?:(?:private|fileprivate|public|package|open)\s+)*"
     r"(?:final\s+)?"
-    rf"(?:typealias\s+{SWIFT_NAME}\s*=|associatedtype\s+{SWIFT_NAME}\b|(?:struct|class|enum)\s+{SWIFT_NAME}(?:\s*[:\{{<]|$))",
+    rf"(?:typealias\s+{SWIFT_NAME}(?:\s*<[^;\n]*)?=|associatedtype\s+{SWIFT_NAME}\b|(?:struct|class|enum)\s+{SWIFT_NAME}(?:\s*[:\{{<]|$))",
 )
 
 
