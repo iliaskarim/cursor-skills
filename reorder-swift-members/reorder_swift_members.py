@@ -2090,14 +2090,31 @@ def is_swiftui_type(header: str) -> bool:
     return bool(SWIFTUI_CONFORMANCE.search(header))
 
 
+def _split_conformance_clause(text: str) -> str:
+    """Cut ``: Protocol`` at bracket depth 0.
+
+    A colon inside ``[Square: Piece]`` is part of the extended type.
+    ``extension Board: Collection`` still drops ``Collection``.
+    """
+    depth = 0
+    for index, character in enumerate(text):
+        if character in "([{<":
+            depth += 1
+        elif character in ")]}>":
+            depth = max(0, depth - 1)
+        elif character == ":" and depth == 0:
+            return text[:index]
+    return text
+
+
 def extension_extended_type_name(header: str) -> str:
-    """``Color``, ``[AppRoute]``, ``Binding`` — strips ``where`` / conformances."""
+    """``Color``, ``[Square: Piece]``, ``Binding`` — strips ``where`` / conformances."""
     match = re.search(r"\bextension\s+", header)
     if not match:
         return ""
     rest = header[match.end() :]
     rest = re.split(r"\bwhere\b", rest, maxsplit=1)[0]
-    rest = rest.split(":", 1)[0]
+    rest = _split_conformance_clause(rest)
     return rest.split("{", 1)[0].strip()
 
 

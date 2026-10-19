@@ -1317,6 +1317,51 @@ public struct Board {
     twice = reorder.reorder_file_layout(reordered, path)
     self.assertEqual(reordered, twice)
 
+  def test_dictionary_extension_keeps_the_colon(self) -> None:
+    """``[Square: Piece]`` is not cut at the dictionary colon.
+
+    The path sorts after ``Square``. A conformance colon at bracket depth 0
+    still drops, including one after a dictionary type.
+    """
+    self.assertEqual(
+      reorder.extension_extended_type_name("private extension [Square: Piece] {"),
+      "[Square: Piece]",
+    )
+    self.assertEqual(
+      reorder.extension_extended_type_name("extension [Square: Piece]: CustomStringConvertible {"),
+      "[Square: Piece]",
+    )
+    self.assertEqual(
+      reorder.extension_extended_type_name("extension Board: Collection {"),
+      "Board",
+    )
+    text = """\
+private extension [Square: Piece] {
+  var castlingRights: Int { 0 }
+}
+
+private extension Piece {
+  func paths() -> Int { 0 }
+}
+
+private extension Square {
+  func step() -> Int { 0 }
+}
+
+public struct Board {}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    piece_at = reordered.index("private extension Piece")
+    square_at = reordered.index("private extension Square")
+    dictionary_at = reordered.index("private extension [Square: Piece]")
+    board_at = reordered.index("public struct Board")
+    self.assertLess(piece_at, square_at)
+    self.assertLess(square_at, dictionary_at)
+    self.assertLess(dictionary_at, board_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
   def test_conformances_group_with_nested_types(self) -> None:
     """``Issue`` stays above ``Issue.Label``, then the ``PullRequest`` group.
 
