@@ -1,6 +1,6 @@
 ---
 name: build-source-pdf
-description: Build a single PDF from repository source files and tests, from one commit's patch, or from the combined diff of two branches such as develop and master. Uses stable monospace formatting, page breaks between sections, and page numbers in the bottom-left corner. Use when the user asks to export/print source code to PDF, include tests, regenerate a code listing PDF, export a commit or a branch divergence, or adjust code-PDF typography/layout.
+description: Build a single PDF from repository source files and tests, from one commit's patch, or from the combined diff of two branches such as develop and master. Ignores dotfiles and paths under dot directories. Uses stable monospace formatting, page breaks between sections, and page numbers in the bottom-left corner. Use when the user asks to export/print source code to PDF, include tests, regenerate a code listing PDF, export a commit or a branch divergence, or adjust code-PDF typography/layout.
 ---
 # Build Source PDF
 
@@ -106,6 +106,8 @@ The export should include:
 - all `Tests/**/*.swift`
 
 Sorted deterministically.
+
+Ignore dotfiles. Skip any path whose name starts with `.`, and any file under a directory whose name starts with `.`, in source listings, commit patches, and branch diffs. That includes `.gitignore`, `.swiftformat`, `.swiftlint.yml`, and files under `.github/` or `.vscode/`.
 
 ## Validation Checklist
 

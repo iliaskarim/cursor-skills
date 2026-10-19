@@ -129,11 +129,27 @@ def _package_title_slug(repo: Path) -> str:
     return m.group(1) if m else repo.name
 
 
+# Drop dotfiles and anything under a dot directory (.github, .gitignore, .vscode, …).
+_DOTPATH_EXCLUDE = [
+    "--",
+    ".",
+    ":(exclude,glob).*",
+    ":(exclude,glob).*/**",
+    ":(exclude,glob)**/.*",
+    ":(exclude,glob)**/.*/**",
+]
+
+
+def _is_dot_path(path: Path) -> bool:
+    return any(part.startswith(".") for part in path.parts)
+
+
 def swift_paths(repo: Path) -> list[Path]:
     out: list[Path] = []
     for pattern in ("Sources/**/*.swift", "Tests/**/*.swift"):
         out.extend(repo.glob(pattern))
-    return sorted(out, key=lambda p: p.as_posix())
+    visible = [path for path in out if not _is_dot_path(path.relative_to(repo))]
+    return sorted(visible, key=lambda p: p.as_posix())
 
 
 def git_output(repo: Path, args: list[str]) -> str:
@@ -181,7 +197,7 @@ def _ruled_section(title: str, body: str) -> str:
 
 
 def _combined_diff(repo: Path, base: str, tip: str) -> str:
-    return git_output(repo, ["diff", "--stat", "--patch", f"{base}..{tip}"])
+    return git_output(repo, ["diff", "--stat", "--patch", f"{base}..{tip}", *_DOTPATH_EXCLUDE])
 
 
 def build_branch_divergence_text(
@@ -208,7 +224,8 @@ def build_branch_divergence_text(
     sections = ["\n".join(cover)]
     if base is None:
         diff = git_output(
-            repo, ["diff", "--stat", "--patch", left_commit, right_commit]
+            repo,
+            ["diff", "--stat", "--patch", left_commit, right_commit, *_DOTPATH_EXCLUDE],
         )
         sections.append(_ruled_section(f"DIFF: {left}..{right}", diff))
     else:
@@ -245,7 +262,10 @@ def build_commit_patch_text(repo: Path, title: str, commit: str) -> str:
     lines.append(f"{title} — commit patch {short}")
     lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
     lines.append("")
-    patch = git_output(repo, ["show", "--format=fuller", "--stat", "--patch", commit])
+    patch = git_output(
+        repo,
+        ["show", "--format=fuller", "--stat", "--patch", commit, *_DOTPATH_EXCLUDE],
+    )
     return "\n".join(lines) + "\n" + patch
 
 
