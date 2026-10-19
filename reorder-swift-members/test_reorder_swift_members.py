@@ -1469,10 +1469,11 @@ extension [AppRoute] {
 
 class SiblingTypeHoistTests(unittest.TestCase):
   def test_internal_and_public_types_sit_above_the_filename_type(self) -> None:
-    """Sibling types move above ``Board`` and keep source order.
+    """Sibling types sort with file-private helpers by ACL, then name.
 
-    File-private helpers stay in the name-sorted group above those siblings.
-    Extensions stay below ``Board``. A second pass is a no-op.
+    Public, package, and internal sit above ``fileprivate`` and ``private``.
+    ``open`` counts as public. Extensions stay below ``Board``. A second
+    pass is a no-op.
     """
     text = """\
 struct Status {
@@ -1497,6 +1498,10 @@ open class Host {
   let board: Board
 }
 
+fileprivate struct Gate {
+  let open: Bool
+}
+
 internal struct Piece {
   let name: String
 }
@@ -1516,12 +1521,13 @@ extension Piece {
     path = Path("Board.swift")
     reordered = reorder.reorder_file_layout(text, path)
     order = [
-      "private struct Hidden",
-      "struct Status",
-      "enum Rank",
       "open class Host",
-      "internal struct Piece",
       "package struct Square",
+      "internal struct Piece",
+      "enum Rank",
+      "struct Status",
+      "fileprivate struct Gate",
+      "private struct Hidden",
       "public struct Board",
       "extension Board",
       "extension Piece",
@@ -1532,7 +1538,7 @@ extension Piece {
     self.assertEqual(reordered, twice)
 
   def test_sibling_types_sit_above_a_filename_extension(self) -> None:
-    """Same hoist when the file extends the filename type and does not declare it.
+    """Same ACL sort when the file extends the filename type and does not declare it.
 
     Nested extensions of that type stay with it, below the sibling types.
     A second pass is a no-op.
@@ -1565,9 +1571,9 @@ extension Piece {
     path = Path("Board.swift")
     reordered = reorder.reorder_file_layout(text, path)
     order = [
-      "private struct Hidden",
-      "struct Piece",
       "public enum Rank",
+      "struct Piece",
+      "private struct Hidden",
       "extension Board {",
       "extension Board.Vector",
       "extension Piece",

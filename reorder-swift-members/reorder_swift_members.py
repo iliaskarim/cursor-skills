@@ -27,11 +27,11 @@ Enum cases (every enum, including nested):
   ``case`` statements.
 
 File layout (per file, after imports):
-  private/fileprivate helpers (sorted by name; ``Type?`` follows ``Type``),
-  other internal/public type declarations (source order; also ``open`` /
-  ``package`` / default internal), the type the file is named for — or the
-  filename ``extension`` when the file does not declare that type — then
-  other extensions, previews.
+  helpers and other type declarations that are not the filename type, sorted
+  by ACL then name (public, package, internal, fileprivate, private; ``open``
+  counts as public; ``Type?`` follows ``Type``). Then the type the file is
+  named for — or the filename ``extension`` when the file does not declare
+  that type — then other extensions, previews.
   A private/fileprivate extension whose head names the file's type stays with
   the other extensions. Extensions that share a root type stay together, parent
   before nested types (``extension Issue`` above ``extension Issue.Label`` and
@@ -1745,24 +1745,18 @@ def extension_wraps_file_type_in_sugar(chunk: str, stem: str) -> bool:
 
 
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
-    """Sibling types, then the filename type or its extension.
+    """Filename type, then extensions of that type.
 
-    Other internal / public types (and ``open``, ``package``, or default
-    internal) keep source order. They sit above the type the file is named
-    for, and above a filename ``extension`` when the file does not declare
-    that type.
+    Sibling types are not in this list. They sort with the other preamble
+    helpers by ACL, then name.
     """
 
     def rank(chunk: str) -> tuple[int, int]:
-        if is_type_declaration_chunk(chunk) and not is_file_type_declaration(
-            chunk, stem
-        ):
-            return (0, 0)
         if is_file_type_declaration(chunk, stem):
-            return (1, 0)
+            return (0, 0)
         if is_extension_chunk(chunk) and extension_head_references_type(chunk, stem):
-            return (1, 1)
-        return (2, 0)
+            return (0, 1)
+        return (1, 0)
 
     indexed = list(enumerate(chunks))
     indexed.sort(key=lambda pair: (rank(pair[1]), pair[0]))
@@ -1841,15 +1835,19 @@ def _sort_extension_runs(chunks: list[str]) -> list[str]:
     return result
 
 
-def preamble_sort_key(chunk: str) -> tuple[tuple[str, ...], int]:
-    """Name path, then ``0`` for a plain type and ``1`` for ``Type?``.
+def preamble_sort_key(chunk: str) -> tuple[int, tuple[str, ...], int]:
+    """ACL, then name path, then ``0`` for a plain type and ``1`` for ``Type?``.
 
-    ``private extension Square?`` sorts after ``private extension Square``.
-    ``private extension Move`` sorts before ``private extension Move.Translation``.
+    Same ACL order as type members: public, package, internal, fileprivate,
+    private. ``open`` counts as public. Within one ACL, ``private extension
+    Square?`` sorts after ``private extension Square``, and ``private
+    extension Move`` sorts before ``private extension Move.Translation``.
     """
     if is_extension_chunk(chunk):
-        return extension_type_sort_key(chunk)
-    return ((preamble_sort_name(chunk),), 0)
+        name_key = extension_type_sort_key(chunk)
+    else:
+        name_key = ((preamble_sort_name(chunk),), 0)
+    return (ACL_RANK[acl_of(chunk)], name_key[0], name_key[1])
 
 
 def sort_preamble_chunks(chunks: list[str]) -> list[str]:
@@ -1962,11 +1960,12 @@ def coalesce_adjacent_debug_chunks(chunks: list[str]) -> list[str]:
 
 
 def reorder_file_layout(text: str, path: Path) -> str:
-    """Place helpers, then sibling types, before the type the file is named for.
+    """Place preamble helpers before the type the file is named for.
 
-    File-private helpers stay first. Other internal / public types sit above
-    that declaration, or above the filename ``extension`` when the file does
-    not declare it, and keep source order. Extensions stay after it.
+    Private helpers and other types that do not match the filename sort
+    together by ACL, then name. Extensions of the filename type stay after
+    that type, including when the file only extends it and does not declare
+    it.
     ``#Preview`` chunks that contain ``\"\"\"`` stay opaque via string-aware
     splitting; the rest of the file still reorders.
     """
@@ -2036,7 +2035,12 @@ def reorder_file_layout(text: str, path: Path) -> str:
             # extensions. ``is_extension_chunk`` below places them.
             preamble.append(chunk)
         elif is_type_declaration_chunk(chunk):
-            mains.append(chunk)
+            # The filename type stays below the preamble. Every other type
+            # sorts there with the private helpers, by ACL then name.
+            if is_file_type_declaration(chunk, stem):
+                mains.append(chunk)
+            else:
+                preamble.append(chunk)
         elif is_extension_chunk(chunk):
             if not has_main_type_decl and extension_head_references_type(chunk, stem):
                 mains.append(chunk)
