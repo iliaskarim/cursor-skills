@@ -1392,6 +1392,7 @@ public struct Board {}
   def test_conformances_group_with_nested_types(self) -> None:
     """``Issue`` stays above ``Issue.Label``, then the ``PullRequest`` group.
 
+    Sibling protocols sit above the protocol the file is named for.
     ``ConversationRecord`` in the conformance list is not collection sugar.
     Path order wins over source order. A second pass is a no-op.
     """
@@ -1419,9 +1420,9 @@ extension PullRequest.Label: ConversationRecordLabel {}
     path = Path("ConversationRecord.swift")
     reordered = reorder.reorder_file_layout(text, path)
     order = [
-      "protocol ConversationRecord {",
       "protocol ConversationRecordLabel",
       "protocol ConversationRecordUser",
+      "protocol ConversationRecord {",
       "extension Issue: ConversationRecord",
       "extension Issue.Label",
       "extension Issue.User",
@@ -1462,6 +1463,123 @@ extension [AppRoute] {
     self.assertLess(route_at, equatable_at)
     self.assertLess(equatable_at, binding_at)
     self.assertLess(binding_at, array_at)
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+
+class SiblingTypeHoistTests(unittest.TestCase):
+  def test_internal_and_public_types_sit_above_the_filename_type(self) -> None:
+    """Sibling types sort with file-private helpers by ACL, then name.
+
+    Public, package, and internal sit above ``fileprivate`` and ``private``.
+    ``open`` counts as public. Extensions stay below ``Board``. A second
+    pass is a no-op.
+    """
+    text = """\
+struct Status {
+  case check
+}
+
+private struct Hidden {
+  let flag: Bool
+}
+
+public struct Board {
+  struct Vector {
+    let files: Int
+  }
+}
+
+enum Rank {
+  case one
+}
+
+open class Host {
+  let board: Board
+}
+
+fileprivate struct Gate {
+  let open: Bool
+}
+
+internal struct Piece {
+  let name: String
+}
+
+package struct Square {
+  let file: Int
+}
+
+extension Board {
+  func step() -> Int { 0 }
+}
+
+extension Piece {
+  func paths() -> Int { 0 }
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    order = [
+      "open class Host",
+      "package struct Square",
+      "internal struct Piece",
+      "enum Rank",
+      "struct Status",
+      "fileprivate struct Gate",
+      "private struct Hidden",
+      "public struct Board",
+      "extension Board",
+      "extension Piece",
+    ]
+    positions = [reordered.index(needle) for needle in order]
+    self.assertEqual(positions, sorted(positions))
+    twice = reorder.reorder_file_layout(reordered, path)
+    self.assertEqual(reordered, twice)
+
+  def test_sibling_types_sit_above_a_filename_extension(self) -> None:
+    """Same ACL sort when the file extends the filename type and does not declare it.
+
+    Nested extensions of that type stay with it, below the sibling types.
+    A second pass is a no-op.
+    """
+    text = """\
+extension Board.Vector {
+  var length: Int { 0 }
+}
+
+private struct Hidden {
+  let flag: Bool
+}
+
+extension Board {
+  func step() -> Int { 0 }
+}
+
+struct Piece {
+  let name: String
+}
+
+public enum Rank {
+  case one
+}
+
+extension Piece {
+  func paths() -> Int { 0 }
+}
+"""
+    path = Path("Board.swift")
+    reordered = reorder.reorder_file_layout(text, path)
+    order = [
+      "public enum Rank",
+      "struct Piece",
+      "private struct Hidden",
+      "extension Board {",
+      "extension Board.Vector",
+      "extension Piece",
+    ]
+    positions = [reordered.index(needle) for needle in order]
+    self.assertEqual(positions, sorted(positions))
     twice = reorder.reorder_file_layout(reordered, path)
     self.assertEqual(reordered, twice)
 

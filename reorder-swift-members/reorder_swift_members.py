@@ -27,8 +27,11 @@ Enum cases (every enum, including nested):
   ``case`` statements.
 
 File layout (per file, after imports):
-  private/fileprivate helpers (sorted by name; ``Type?`` follows ``Type``),
-  main type(s), other extensions, previews.
+  helpers and other type declarations that are not the filename type, sorted
+  by ACL then name (public, package, internal, fileprivate, private; ``open``
+  counts as public; ``Type?`` follows ``Type``). Then the type the file is
+  named for — or the filename ``extension`` when the file does not declare
+  that type — then other extensions, previews.
   A private/fileprivate extension whose head names the file's type stays with
   the other extensions. Extensions that share a root type stay together, parent
   before nested types (``extension Issue`` above ``extension Issue.Label`` and
@@ -40,7 +43,7 @@ File layout (per file, after imports):
   It is not a preamble helper. Unrelated private extensions still sort into
   the preamble.
   A ``protocol`` is a main type, same as ``struct`` / ``class`` / ``enum`` / ``actor``,
-  so conformances stay below the protocol the file is named for.
+  so sibling protocols sit above it and conformances stay below it.
   Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
   stay in the import preamble. They must not be left behind when a private
   helper is hoisted, and they must not be ranked as leftover chunks.
@@ -1486,6 +1489,16 @@ def is_type_declaration_chunk(text: str) -> bool:
     )
 
 
+def is_file_type_declaration(chunk: str, stem: str) -> bool:
+    """True when the chunk declares the type the file is named for."""
+    return is_type_declaration_chunk(chunk) and bool(
+        re.search(
+            rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
+            first_code_line(chunk),
+        )
+    )
+
+
 def is_preview_line(stripped: str) -> bool:
     return stripped.startswith("#Preview") or stripped.startswith("@Preview")
 
@@ -1732,11 +1745,14 @@ def extension_wraps_file_type_in_sugar(chunk: str, stem: str) -> bool:
 
 
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
+    """Filename type, then extensions of that type.
+
+    Sibling types are not in this list. They sort with the other preamble
+    helpers by ACL, then name.
+    """
+
     def rank(chunk: str) -> tuple[int, int]:
-        if is_type_declaration_chunk(chunk) and re.search(
-            rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
-            first_code_line(chunk),
-        ):
+        if is_file_type_declaration(chunk, stem):
             return (0, 0)
         if is_extension_chunk(chunk) and extension_head_references_type(chunk, stem):
             return (0, 1)
@@ -1819,15 +1835,19 @@ def _sort_extension_runs(chunks: list[str]) -> list[str]:
     return result
 
 
-def preamble_sort_key(chunk: str) -> tuple[tuple[str, ...], int]:
-    """Name path, then ``0`` for a plain type and ``1`` for ``Type?``.
+def preamble_sort_key(chunk: str) -> tuple[int, tuple[str, ...], int]:
+    """ACL, then name path, then ``0`` for a plain type and ``1`` for ``Type?``.
 
-    ``private extension Square?`` sorts after ``private extension Square``.
-    ``private extension Move`` sorts before ``private extension Move.Translation``.
+    Same ACL order as type members: public, package, internal, fileprivate,
+    private. ``open`` counts as public. Within one ACL, ``private extension
+    Square?`` sorts after ``private extension Square``, and ``private
+    extension Move`` sorts before ``private extension Move.Translation``.
     """
     if is_extension_chunk(chunk):
-        return extension_type_sort_key(chunk)
-    return ((preamble_sort_name(chunk),), 0)
+        name_key = extension_type_sort_key(chunk)
+    else:
+        name_key = ((preamble_sort_name(chunk),), 0)
+    return (ACL_RANK[acl_of(chunk)], name_key[0], name_key[1])
 
 
 def sort_preamble_chunks(chunks: list[str]) -> list[str]:
@@ -1940,8 +1960,12 @@ def coalesce_adjacent_debug_chunks(chunks: list[str]) -> list[str]:
 
 
 def reorder_file_layout(text: str, path: Path) -> str:
-    """Place file-private helpers before main types; extensions after main types.
+    """Place preamble helpers before the type the file is named for.
 
+    Private helpers and other types that do not match the filename sort
+    together by ACL, then name. Extensions of the filename type stay after
+    that type, including when the file only extends it and does not declare
+    it.
     ``#Preview`` chunks that contain ``\"\"\"`` stay opaque via string-aware
     splitting; the rest of the file still reorders.
     """
@@ -1996,11 +2020,7 @@ def reorder_file_layout(text: str, path: Path) -> str:
 
     type_declarations = [c for c in chunks if is_type_declaration_chunk(c)]
     has_main_type_decl = any(
-        re.search(
-            rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
-            first_code_line(c),
-        )
-        for c in type_declarations
+        is_file_type_declaration(c, stem) for c in type_declarations
     )
 
     for chunk in chunks:
@@ -2015,7 +2035,12 @@ def reorder_file_layout(text: str, path: Path) -> str:
             # extensions. ``is_extension_chunk`` below places them.
             preamble.append(chunk)
         elif is_type_declaration_chunk(chunk):
-            mains.append(chunk)
+            # The filename type stays below the preamble. Every other type
+            # sorts there with the private helpers, by ACL then name.
+            if is_file_type_declaration(chunk, stem):
+                mains.append(chunk)
+            else:
+                preamble.append(chunk)
         elif is_extension_chunk(chunk):
             if not has_main_type_decl and extension_head_references_type(chunk, stem):
                 mains.append(chunk)
