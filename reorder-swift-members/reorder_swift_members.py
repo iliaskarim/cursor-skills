@@ -28,7 +28,11 @@ Enum cases (every enum, including nested):
 
 File layout (per file, after imports):
   private/fileprivate helpers (sorted by name; ``Type?`` follows ``Type``),
-  main type(s), other extensions, previews.
+  other internal/public type declarations (source order; also ``open`` /
+  ``package`` / default internal), the type the file is named for, other
+  extensions, previews.
+  Sibling types stay after a filename ``extension`` when the file does not
+  declare that type.
   A private/fileprivate extension whose head names the file's type stays with
   the other extensions. Extensions that share a root type stay together, parent
   before nested types (``extension Issue`` above ``extension Issue.Label`` and
@@ -40,7 +44,7 @@ File layout (per file, after imports):
   It is not a preamble helper. Unrelated private extensions still sort into
   the preamble.
   A ``protocol`` is a main type, same as ``struct`` / ``class`` / ``enum`` / ``actor``,
-  so conformances stay below the protocol the file is named for.
+  so sibling protocols sit above it and conformances stay below it.
   Import-only ``#if`` / ``#endif`` blocks (``#if DEBUG``, ``#if canImport``, …)
   stay in the import preamble. They must not be left behind when a private
   helper is hoisted, and they must not be ranked as leftover chunks.
@@ -1486,6 +1490,16 @@ def is_type_declaration_chunk(text: str) -> bool:
     )
 
 
+def is_file_type_declaration(chunk: str, stem: str) -> bool:
+    """True when the chunk declares the type the file is named for."""
+    return is_type_declaration_chunk(chunk) and bool(
+        re.search(
+            rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
+            first_code_line(chunk),
+        )
+    )
+
+
 def is_preview_line(stripped: str) -> bool:
     return stripped.startswith("#Preview") or stripped.startswith("@Preview")
 
@@ -1732,15 +1746,23 @@ def extension_wraps_file_type_in_sugar(chunk: str, stem: str) -> bool:
 
 
 def sort_main_file_chunks(chunks: list[str], stem: str) -> list[str]:
+    """Filename type last among type declarations; extensions follow it.
+
+    Other internal / public types (and ``open``, ``package``, or default
+    internal) keep source order and sit above the type the file is named for.
+    When the file has no such declaration, a matching ``extension`` stays
+    first and those other types stay after it.
+    """
+    has_file_type = any(is_file_type_declaration(chunk, stem) for chunk in chunks)
+
     def rank(chunk: str) -> tuple[int, int]:
-        if is_type_declaration_chunk(chunk) and re.search(
-            rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
-            first_code_line(chunk),
-        ):
-            return (0, 0)
+        if is_file_type_declaration(chunk, stem):
+            return (1, 0)
         if is_extension_chunk(chunk) and extension_head_references_type(chunk, stem):
-            return (0, 1)
-        return (1, 0)
+            return (1, 1) if has_file_type else (0, 1)
+        if has_file_type and is_type_declaration_chunk(chunk):
+            return (0, 0)
+        return (2, 0) if has_file_type else (1, 0)
 
     indexed = list(enumerate(chunks))
     indexed.sort(key=lambda pair: (rank(pair[1]), pair[0]))
@@ -1940,8 +1962,10 @@ def coalesce_adjacent_debug_chunks(chunks: list[str]) -> list[str]:
 
 
 def reorder_file_layout(text: str, path: Path) -> str:
-    """Place file-private helpers before main types; extensions after main types.
+    """Place helpers, then sibling types, before the type the file is named for.
 
+    File-private helpers stay first. Other internal / public types sit above
+    that declaration and keep source order. Extensions stay after it.
     ``#Preview`` chunks that contain ``\"\"\"`` stay opaque via string-aware
     splitting; the rest of the file still reorders.
     """
@@ -1996,11 +2020,7 @@ def reorder_file_layout(text: str, path: Path) -> str:
 
     type_declarations = [c for c in chunks if is_type_declaration_chunk(c)]
     has_main_type_decl = any(
-        re.search(
-            rf"\b(?:struct|class|enum|actor|protocol)\s+{re.escape(stem)}\b",
-            first_code_line(c),
-        )
-        for c in type_declarations
+        is_file_type_declaration(c, stem) for c in type_declarations
     )
 
     for chunk in chunks:
